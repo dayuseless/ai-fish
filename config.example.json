@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "workspace": ".",
+  "canonical_rules": "RULES.md",
+  "canonical_seal": "RULES.sha256",
+  "max_note_chars": 12000,
+  "max_search_results": 80
+}

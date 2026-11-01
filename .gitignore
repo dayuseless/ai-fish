@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# ai-fish runtime & state
+index/.lock
+index/*.log
+index/memory.db
+index/memory.db-journal
+index/mailbox.db
+index/mailbox.db-journal
+state.json
+daily/.draft-*
+
+# Snapshots (local immutable recovery store)
+snapshots/*
+!snapshots/.gitkeep
+
+# Sensitive or scratch files
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
