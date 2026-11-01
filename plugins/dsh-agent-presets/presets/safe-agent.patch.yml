@@ -1,0 +1,17 @@
+# DSH Preset Patch: Safe Agent Mode (Memory & MCP only)
+- insert:
+    - id: preset-safe-agent
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: safe-agent
+        name: Safe Memory Agent
+        description: Agent equipped with persistent memory and sandboxed MCP tools, with all dangerous OS/shell tools restricted.
+        order: 11
+        plugins:
+          - id: tool-restrict
+            name: dsh-agent-presets/tool-restrict.mjs
+            config:
+              mode: guarded
+              allowedPrefixes:
+                - 'mcp__ai-fish__'
+                - 'mcp__memory__'

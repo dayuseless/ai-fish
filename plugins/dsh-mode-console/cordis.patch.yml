@@ -1,0 +1,5 @@
+- insert:
+    - id: agent-mode
+      name: dsh-mode-console
+      config:
+        mode: interactive

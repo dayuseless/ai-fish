@@ -1,0 +1,14 @@
+# DSH Preset Patch: Chat-Only Mode
+- insert:
+    - id: preset-chat-only
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: chat-only
+        name: Chat-Only Companion (Safe)
+        description: Pure communication line with zero tools exposed.
+        order: 10
+        plugins:
+          - id: tool-restrict
+            name: dsh-agent-presets/tool-restrict.mjs
+            config:
+              mode: chat-only

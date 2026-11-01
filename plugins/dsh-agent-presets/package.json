@@ -1,0 +1,16 @@
+{
+  "name": "dsh-agent-presets",
+  "version": "1.0.0",
+  "description": "Agent presets and security tool guard bundle for DeepSeek Harness (DSH): chat-only and safe-agent modes with strict tool restriction",
+  "type": "module",
+  "main": "./tool-restrict.mjs",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./presets/chat-only.patch.yml",
+        "./presets/safe-agent.patch.yml"
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "ai-fish-mcp-server",
+  "version": "1.0.0",
+  "description": "Official Model Context Protocol (MCP) Server for the ai-fish persistent memory architecture",
+  "type": "module",
+  "bin": {
+    "ai-fish-mcp": "./index.js"
+  },
+  "main": "./index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  }
+}

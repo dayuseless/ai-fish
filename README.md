@@ -149,6 +149,81 @@ You can drop `ai-fish` directly into any existing agent workspace:
 
 ---
 
+## 🔌 Plugin Ecosystem & MCP Server (JavaScript / Node.js)
+
+`ai-fish` provides a full suite of zero-dependency Node.js plugins, tools, and an official **Model Context Protocol (MCP)** server to seamlessly integrate persistent memory with popular AI hosts (Claude Desktop, Cursor, Cline, Windsurf, DeepSeek Harness / DSH, and custom bots).
+
+```
+ai-fish/
+├── plugins/
+│   ├── mcp-memory-server/     # Zero-dependency Node.js MCP server (stdio)
+│   ├── dsh-agent-presets/     # Tool restriction & safety presets for DSH
+│   └── dsh-mode-console/      # Dynamic agent mode switcher (volatile settings)
+└── integrations/js/
+    ├── admin.mjs              # Fast Node.js CLI for memory queries & mailbox
+    ├── digest-auto.mjs        # Automated background memory distillation daemon
+    └── peak-gate.mjs          # Schedule-aware peak/valley traffic gatekeeper
+```
+
+### 1. Model Context Protocol (MCP) Server (`plugins/mcp-memory-server`)
+Exposes `ai-fish` persistent memory tools (`mem_search`, `mem_read_item`, `mem_note`, `mem_mailbox_check`, `mem_mailbox_send`) over standard JSON-RPC stdio. Requires Node.js >= 22.5 (uses native `node:sqlite`, zero npm install needed).
+
+**Claude Desktop Configuration (`claude_desktop_config.json`):**
+```json
+{
+  "mcpServers": {
+    "ai-fish": {
+      "command": "node",
+      "args": ["/path/to/ai-fish/plugins/mcp-memory-server/index.js"],
+      "env": {
+        "AI_FISH_BASE": "/path/to/ai-fish"
+      }
+    }
+  }
+}
+```
+
+**Cursor Configuration (`.cursor/mcp.json`):**
+```json
+{
+  "mcpServers": {
+    "ai-fish": {
+      "command": "node",
+      "args": ["./plugins/mcp-memory-server/index.js"],
+      "env": {
+        "AI_FISH_BASE": "${workspaceFolder}"
+      }
+    }
+  }
+}
+```
+
+### 2. DSH Tool Restriction & Security Guard (`plugins/dsh-agent-presets`)
+A battle-tested security plugin bundle for DeepSeek Harness (DSH) and Cordis runtimes:
+- **`tools.restrict`**: Hides local execution tools (`pwsh`, `bash`, `read`, `write`, `subagent`, `plugin_manager`) from the agent's schema at registration time.
+- **`tools.guard`**: Strict runtime whitelist enforcement intercepting unauthorized tool invocations.
+- Includes pre-configured preset patches for `chat-only` (zero tools) and `safe-agent` (memory-only MCP access).
+
+```json
+// In your DSH profile package.json:
+{
+  "dependencies": {
+    "dsh-agent-presets": "link:./plugins/dsh-agent-presets"
+  }
+}
+```
+
+### 3. Node.js Standalone Integrations (`integrations/js/`)
+- **`admin.mjs`**: Fast CLI operator tool to query FTS5 memory and manage asynchronous agent-to-agent mailboxes.
+  ```bash
+  node integrations/js/admin.mjs search "architecture decisions"
+  node integrations/js/admin.mjs mailbox list
+  ```
+- **`digest-auto.mjs`**: Automated task runner for background memory distillation and SQLite sync (`--daemon` mode supported).
+- **`peak-gate.mjs`**: Schedule-aware token economy gatekeeper for automated companion bots, distinguishing peak hours (strict quotas) from off-peak hours.
+
+---
+
 ## 🛠️ CLI Command Reference
 
 | Command | Purpose | Example |
