@@ -36,7 +36,7 @@ try:
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
-    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
+    from lib.storage import cmd_commit_daily, cmd_init, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
@@ -51,7 +51,7 @@ except ModuleNotFoundError:
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
-    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
+    from lib.storage import cmd_commit_daily, cmd_init, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="显示记忆库状态")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("init", help="初始化全新的记忆库目录结构与模板")
+    p.add_argument("--dir", default="", help="初始化目标目录（默认当前记忆库）")
+    p.add_argument("--force", action="store_true", help="强制覆盖已存在的模板文件")
+    p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("session-start", help="会话启动：打印规则、长期记忆、最近日记和待处理事件")
     p.add_argument("--brief", action="store_true", help="只输出封印、pending、状态与元文档入口，不打印长期记忆全文")

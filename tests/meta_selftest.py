@@ -40,7 +40,8 @@ def main() -> int:
 
     brief = run("session-start", "--brief")
     assert brief.returncode == 0, brief.stderr
-    assert len(brief.stdout) < 3000, f"brief too large: {len(brief.stdout)} chars"
+    # 预算放宽至 4000 字符：因引入 §五「RESUME 现场快照」（≤1200字）与多条待固化事件索引
+    assert len(brief.stdout) < 4000, f"brief too large: {len(brief.stdout)} chars"
     for needle in ("PENDING", "META"):
         assert needle in brief.stdout, f"brief missing: {needle}"
 

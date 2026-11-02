@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -137,6 +138,26 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
     line_no = count_lines(raw_path) + 1
     ref = args.ref or ""
     tags = list(args.tag or [])
+
+    # 计算事件级哈希链 (Event-Level Hash Chain)
+    prev_hash = "GENESIS_00000000"
+    if raw_path.exists():
+        try:
+            with raw_path.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size > 0:
+                    buf_size = min(4096, size)
+                    f.seek(size - buf_size)
+                    raw_lines = f.read().splitlines()
+                    for r_line in reversed(raw_lines):
+                        r_line = r_line.strip()
+                        if r_line:
+                            prev_hash = hashlib.sha256(r_line).hexdigest()[:16]
+                            break
+        except Exception:
+            pass
+
     event = {
         "id": eid,
         "ts": ts,
@@ -148,7 +169,11 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
         "tags": tags,
         "source": f"session:{session_id()}",
         "recordedAt": ts,
+        "prev_hash": prev_hash,
     }
+    canonical = json.dumps(event, sort_keys=True, ensure_ascii=False)
+    event["hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
     append_jsonl(raw_path, event)
     try:
         append_jsonl(
@@ -587,6 +612,24 @@ def cmd_redact(args: argparse.Namespace) -> int:
         print(f"REDACT_OK {event_id} ({rel_posix(file_path)}:{lineno})")
         print(f"AUDIT_LOGGED {audit_id}")
 
+        # 3.5 级联清理已固化日记文件 (daily/20??-??-??.md) 中的相关引用与摘要
+        daily_files = sorted(DAILY.glob("20??-??-??.md"))
+        for daily_path in daily_files:
+            daily_content = read_text(daily_path)
+            if event_id in daily_content:
+                snapshot_file(rel_posix(daily_path), f"redact {event_id} 级联清理日记前快照")
+                new_d_lines = []
+                for d_line in daily_content.splitlines():
+                    if event_id in d_line:
+                        # 识别列表前缀，将敏感内容替换为统一的墓碑提示
+                        prefix_match = re.match(r"^(\s*[-*]?\s*)", d_line)
+                        leading = prefix_match.group(1) if prefix_match else "- "
+                        new_d_lines.append(f"{leading}[REDACTED: 已按用户授权擦除敏感内容] `{event_id}`")
+                    else:
+                        new_d_lines.append(d_line)
+                atomic_write(daily_path, "\n".join(new_d_lines) + "\n")
+                print(f"DAILY_REDACT_OK {rel_posix(daily_path)} 中的 `{event_id}` 已同步遮蔽")
+
         # 4. 检查长期记忆是否引用了此被遮蔽的事件
         for long_name in ("USER.md", "MEMORY.md", "SELF.md"):
             long_path = BASE / long_name
@@ -604,4 +647,28 @@ def cmd_redact(args: argparse.Namespace) -> int:
             print(f"WARN: SQLite 级联刷新跳过：{exc}")
 
     return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """初始化记忆库目录结构与模板文件。"""
+    target = Path(args.dir).resolve() if args.dir else BASE
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "daily" / "raw").mkdir(parents=True, exist_ok=True)
+    (target / "index").mkdir(parents=True, exist_ok=True)
+    (target / "snapshots").mkdir(parents=True, exist_ok=True)
+    (target / "daily" / "archive").mkdir(parents=True, exist_ok=True)
+    (target / "inbox").mkdir(parents=True, exist_ok=True)
+
+    tmpl_dir = BASE / "templates"
+    if tmpl_dir.is_dir():
+        for tmpl in tmpl_dir.glob("*.template.md"):
+            dest_name = tmpl.name.replace(".template.md", ".md")
+            dest_file = target / dest_name
+            if not dest_file.exists() or args.force:
+                shutil.copyfile(tmpl, dest_file)
+                print(f"INIT_FILE {dest_file.name}")
+
+    print(f"INIT_OK: 记忆库目录结构已在 {target} 初始化完毕")
+    return 0
+
 

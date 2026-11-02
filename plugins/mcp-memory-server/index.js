@@ -194,6 +194,30 @@ function handleToolCall(name, args) {
 // JSON-RPC stdio handler
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
+function autoCaptureHostEvent(toolName, success, err) {
+  if (process.env.AI_FISH_AUTO_CAPTURE !== '1') return;
+  const today = new Date().toISOString().slice(0, 10);
+  const rawFile = path.join(RAW_DIR, `${today}.jsonl`);
+  const evtId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const nowIso = new Date().toISOString();
+  const event = {
+    id: evtId,
+    ts: nowIso,
+    date: today,
+    kind: 'observation',
+    actor: 'system',
+    text: `[HOST_LIFECYCLE] Executed MCP tool "${toolName}" (${success ? 'SUCCESS' : 'FAILED: ' + (err || '')})`,
+    ref: `mcp:${toolName}`,
+    tags: ['auto-capture', 'host-hook'],
+    source: 'host:mcp-interceptor',
+    recordedAt: nowIso
+  };
+  try {
+    fs.mkdirSync(RAW_DIR, { recursive: true });
+    fs.appendFileSync(rawFile, JSON.stringify(event) + '\n', 'utf8');
+  } catch {}
+}
+
 rl.on('line', (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -228,6 +252,7 @@ rl.on('line', (line) => {
       const toolArgs = params?.arguments || {};
       try {
         const out = handleToolCall(toolName, toolArgs);
+        autoCaptureHostEvent(toolName, true);
         const res = {
           jsonrpc: '2.0',
           id,
@@ -237,6 +262,7 @@ rl.on('line', (line) => {
         };
         process.stdout.write(JSON.stringify(res) + '\n');
       } catch (err) {
+        autoCaptureHostEvent(toolName, false, err.message);
         const res = {
           jsonrpc: '2.0',
           id,

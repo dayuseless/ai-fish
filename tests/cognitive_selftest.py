@@ -142,6 +142,13 @@ def test_tombstone_redaction(f: dict):
     res_search = run(root, "search", "--query", "Secret9988")
     assert secret_text in res_search.stdout, "Sensitive token should be initially found in search"
 
+    # Create a mock daily log containing the sensitive event to test daily cascade redaction
+    daily_file = mem_dir / "daily" / "2026-11-02.md"
+    daily_file.write_text(
+        "# 2026-11-02 日记\n\n## 事件\n\n- 初始化临时密钥：" + secret_text + " `" + secret_evt + "`\n",
+        encoding="utf-8"
+    )
+
     print("  [Step 5] Executing tombstone redaction protocol...")
     # Attempt without --yes should refuse and ask for confirmation
     refuse_res = run(root, "redact", "--event", secret_evt, "--reason", "测试凭据清除")
@@ -152,8 +159,15 @@ def test_tombstone_redaction(f: dict):
     redact_res = run(root, "redact", "--event", secret_evt, "--reason", "测试凭据清除", "--yes")
     assert redact_res.returncode == 0, f"Redact failed: {redact_res.stderr} {redact_res.stdout}"
     assert f"REDACT_OK {secret_evt}" in redact_res.stdout
+    assert "DAILY_REDACT_OK" in redact_res.stdout
 
-    # Verify physical file: secret string is GONE, replaced by [REDACTED]
+    # Verify daily log: secret text is replaced by [REDACTED], but event ID remains
+    daily_after = daily_file.read_text(encoding="utf-8")
+    assert secret_text not in daily_after, "CRITICAL: Sensitive text still in daily markdown!"
+    assert "[REDACTED: 已按用户授权擦除敏感内容]" in daily_after
+    assert secret_evt in daily_after
+
+    # Verify physical raw file: secret string is GONE, replaced by [REDACTED]
     raw_files = list((mem_dir / "daily" / "raw").glob("*.jsonl"))
     all_raw_text = "\n".join(p.read_text(encoding="utf-8") for p in raw_files)
     assert secret_text not in all_raw_text, "CRITICAL: Raw sensitive text still leaked in JSONL file!"
@@ -164,12 +178,13 @@ def test_tombstone_redaction(f: dict):
     res_search_after = run(root, "search", "--query", "Secret9988")
     assert secret_text not in res_search_after.stdout
     assert "0 hit(s)" in res_search_after.stdout or "NO_MATCHES" in res_search_after.stdout
-    print("  -> Sensitive data thoroughly purged from raw file and SQLite FTS.")
+    print("  -> Sensitive data thoroughly purged from raw file, daily log, and SQLite FTS.")
 
     print("  [Step 6] Running integrity verify & audit...")
     res_ver = run(root, "verify")
     assert res_ver.returncode == 0, f"Verify failed after redaction:\n{res_ver.stdout}\n{res_ver.stderr}"
     assert "VERIFY PASS" in res_ver.stdout
+    assert "原始事件哈希链" in res_ver.stdout
 
     res_aud = run(root, "audit")
     assert res_aud.returncode == 0, f"Audit failed after redaction:\n{res_aud.stdout}\n{res_aud.stderr}"

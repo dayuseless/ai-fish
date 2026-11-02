@@ -305,6 +305,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
             bad_dates.append(f"{rel_posix(path)}:{lineno} 日期={obj.get('date')}")
     check("原始事件日期与文件一致", not bad_dates, "; ".join(bad_dates[:5]))
 
+    # 事件级哈希链连续性校验
+    broken_chains = []
+    if RAW.exists():
+        import hashlib
+        for raw_file in sorted(RAW.glob("*.jsonl")):
+            prev_line_hash = "GENESIS_00000000"
+            with raw_file.open("r", encoding="utf-8-sig", errors="replace") as rf:
+                for lno, raw_line in enumerate(rf, 1):
+                    raw_line_s = raw_line.strip()
+                    if not raw_line_s:
+                        continue
+                    try:
+                        ev_obj = json.loads(raw_line_s)
+                    except Exception:
+                        continue
+                    expected_prev = ev_obj.get("prev_hash")
+                    if expected_prev is not None:
+                        if expected_prev != prev_line_hash and not ev_obj.get("redacted"):
+                            broken_chains.append(f"{rel_posix(raw_file)}:{lno} (id={ev_obj.get('id')})")
+                    prev_line_hash = hashlib.sha256(raw_line_s.encode("utf-8")).hexdigest()[:16]
+    check("原始事件哈希链", not broken_chains, f"链条断裂: {', '.join(broken_chains[:3])}", warn_only=True)
+
     idx_rows, idx_errors = read_jsonl(EVENTS_INDEX)
     check("events 索引可解析", not idx_errors, "; ".join(idx_errors[:3]), warn_only=True)
 
