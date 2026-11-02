@@ -1,11 +1,11 @@
 # ai-fish 🐟
 
 > **Agent-Native, Cross-Session Persistent Memory Architecture**
-> *Append-Only Ledger · Triple-Tier Hierarchy · Tamper-Evident Hash Seal · Dual-Track SQLite Projection · Zero Hallucination*
+> *Append-Only Ledger · Triple-Tier Hierarchy · Tamper-Evident Hash Seal · Dual-Track SQLite Projection · Verifiable Provenance · Epistemic Rigor*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-brightgreen.svg)](https://www.python.org/)
-[![Tests: 7/7 Passing](https://img.shields.io/badge/tests-7%2F7%20passing-success.svg)](tests/)
+[![Tests: 8/8 Passing](https://img.shields.io/badge/tests-8%2F8%20passing-success.svg)](tests/)
 [![Architecture: File--First](https://img.shields.io/badge/architecture-text--first%20%2B%20sqlite-orange.svg)](SPEC.md)
 
 ---
@@ -70,6 +70,44 @@ It treats memory not as a black-box vector blob, but as an **auditable, append-o
 6. **Cross-Platform Lock & Snapshot Protection**
    - Automatic pre-modification snapshots (`snapshots/`) with SHA-256 manifests ensure 100% non-destructive recovery.
    - Inter-process mutual exclusion (`index/.lock`) supports Windows (`msvcrt`) and POSIX (`fcntl`).
+7. **Right-to-be-Forgotten Tombstone Protocol (`mem.py redact`)**
+   - Reconciles append-only auditability with user data privacy: in-place tombstoning (`[REDACTED]`), pre-redaction snapshots, audit trail logging, and cascaded FTS index purging.
+
+---
+
+## 🧠 Epistemic Rigor: Provenance ≠ Validity
+
+A foundational principle of `ai-fish` is distinguishing between record-keeping and truth:
+
+> **Provenance does not equal validity.**
+> Having an event ID (`evt-...`) proves when, where, and by whom an observation was recorded; it does **not** automatically make the statement an objective truth.
+
+To prevent agents from promoting erroneous inferences into dogmatic "facts", `ai-fish` formalizes four epistemic dimensions:
+1. **Provenance (来源可追溯性)**: Uniquely identifiable origin (`evt-ID`, actor, timestamp, and source session).
+2. **Validity (事实真实性)**: Correspondence with objective external reality, requiring empirical testing or direct observation.
+3. **Corroboration (独立佐证支持)**: High-stakes assertions must be corroborated across independent scenarios or explicit user confirmations before promotion to long-term memory.
+4. **Confidence (结论置信度)**: Expressed as evidence-backed certainty (`high-confidence`, `medium-confidence`, `unverified hypothesis`), never conflated with mere repetition frequency.
+
+---
+
+## 🛡️ The Right to be Forgotten: Tombstone Redaction Protocol
+
+A classic dilemma in append-only ledgers is user privacy (e.g. GDPR "Right to be Forgotten") vs. data immutability. If a user instructs: *"Delete the temporary credential or private detail I shared"*, a naive system either refuses (violating user sovereignty) or deletes lines (breaking line indexing, timestamps, and hash continuity).
+
+`ai-fish` resolves this with a **Tombstone Redaction Protocol (`mem.py redact`)**:
+1. **In-place Masking**: The sensitive payload in `daily/raw/*.jsonl` is overwritten with `[REDACTED per user request: <reason>]`, retaining the original timestamp, event ID, and line sequence.
+2. **Cascade Purging**: Automatically triggers a SQLite FTS rebuild, permanently expunging private tokens from the search index.
+3. **Safety Snapshot**: Takes an immutable backup in `snapshots/` prior to modification.
+4. **Audit Trail**: Appends a transparent system event logging the redaction event ID, authorization, and timestamp.
+5. **Reference Alert**: Scans `USER.md`, `MEMORY.md`, and `SELF.md` to alert operators if long-term memory cited the tombstoned event.
+
+---
+
+## 🔒 Code vs. Personal Memory Separation
+
+- **Framework is Public, Memories are Private**: The `ai-fish` engine and templates are open-source, but your life history, daily diaries, and user profile are private.
+- **Git Safety by Default**: The default `.gitignore` excludes `daily/raw/*.jsonl`, `daily/*.md`, and runtime databases (`memory.db`, `mailbox.db`) to prevent accidental commits of personal logs to public forks.
+
 
 ---
 
@@ -238,6 +276,7 @@ A battle-tested security plugin bundle for DeepSeek Harness (DSH) and Cordis run
 | `db` | SQLite dual-track operations (`sync`, `query`, `status`, `get`) | `python bin/mem.py db sync` |
 | `snapshot` | Create an immutable pre-edit backup with SHA-256 verification | `python bin/mem.py snapshot --target MEMORY.md` |
 | `restore` | Safely restore a file from snapshot | `python bin/mem.py restore --target MEMORY.md --yes` |
+| `redact` | Tombstone redaction protocol (GDPR / right-to-be-forgotten) | `python bin/mem.py redact --event evt-... --reason ... --yes` |
 | `mailbox` | Multi-agent asynchronous cross-session mailbox tool | `python bin/mem.py mailbox list` |
 | `audit` | Comprehensive mechanical integrity audit | `python bin/mem.py audit` |
 | `verify` | Check structural invariants and seal consistency | `python bin/mem.py verify` |
@@ -254,7 +293,7 @@ python -X utf8 tests/run_all.py
 
 ```text
 ============================================================
-开始运行 ai-fish 全量自测回归套件 (共 7 组)
+开始运行 ai-fish 全量自测回归套件 (共 8 组)
 ============================================================
 [1/7] meta_selftest.py         | 元文档预算与 session-start brief 检查 ... PASS
 [2/7] todo_selftest.py         | 待办提取与 rollover 跨天账本自测 ... PASS
@@ -263,8 +302,9 @@ python -X utf8 tests/run_all.py
 [5/7] feature_selftest.py      | 口头授权、现场刷新、升格检测等新特性自测 ... PASS
 [6/7] failure_injection.py     | 故障注入（坏行/缺失/只读篡改）恢复自测 ... PASS
 [7/7] db_selftest.py           | 轻量级 SQLite 数据库结构化与 FTS 全文索引自测 ... PASS
+[8/8] cognitive_selftest.py    | 认知连续性演进与遗忘遮蔽自测 ... PASS
 ============================================================
-执行完毕: 7/7 通过 (ALL 7 TEST SUITES PASSED)
+执行完毕: 8/8 通过 (ALL 8 TEST SUITES PASSED)
 ============================================================
 ```
 

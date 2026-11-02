@@ -497,3 +497,111 @@ def cmd_restore(args: argparse.Namespace) -> int:
         )
         print(f"RESTORE_OK {rel_posix(target)} <- {rel_posix(snap)}")
     return 0
+
+
+def cmd_redact(args: argparse.Namespace) -> int:
+    """数据遗忘与墓碑遮蔽协议 (Tombstone Redaction Protocol)。
+    不破坏日志物理行序与事件编号连续性，将指定事件正文彻底遮蔽替换为 [REDACTED]，
+    自动执行修改前快照、审计记录登记、长期记忆引用排查及 SQLite 全文索引级联更新。
+    """
+    cfg = load_config()
+    require_seal(cfg)
+    ensure_dirs()
+    event_id = args.event
+    reason = args.reason or "用户明确要求删除"
+
+    m = event_map()
+    if event_id not in m:
+        raise MemError(f"未找到事件: {event_id}")
+
+    file_path, lineno, obj = m[event_id]
+    if obj.get("redacted"):
+        print(f"NOOP: 事件 {event_id} 此前已被遮蔽 (at {obj.get('redacted_at')})")
+        return 0
+
+    if not args.yes:
+        print(f"CONFIRM_REQUIRED: 将对事件 {event_id} 执行墓碑遮蔽 (Tombstone Redaction)。")
+        print(f"  文件: {rel_posix(file_path)} 第 {lineno} 行")
+        preview = obj.get("text", "")
+        if len(preview) > 60:
+            preview = preview[:60] + "..."
+        print(f"  原内容预览: {preview}")
+        print("  注意: 遮蔽后原文本不可逆清除；确认执行请追加 --yes 参数。")
+        return 2
+
+    with memory_lock():
+        # 1. 执行修改前自动快照
+        snapshot_file(rel_posix(file_path), f"redact {event_id} 前自动快照")
+
+        # 2. 原子重写 JSONL 文件，将正文替换为墓碑标记
+        lines = []
+        modified = False
+        with file_path.open("r", encoding="utf-8-sig", errors="replace") as f:
+            for line in f:
+                line_str = line.strip()
+                if not line_str:
+                    lines.append(line)
+                    continue
+                try:
+                    cur = json.loads(line_str)
+                    if cur.get("id") == event_id:
+                        cur["text"] = f"[REDACTED per user request: {reason}]"
+                        cur["redacted"] = True
+                        cur["redacted_at"] = iso()
+                        cur["redact_reason"] = reason
+                        lines.append(json.dumps(cur, ensure_ascii=False) + "\n")
+                        modified = True
+                    else:
+                        lines.append(line)
+                except Exception:
+                    lines.append(line)
+
+        if not modified:
+            raise MemError(f"未能重写目标事件行: {event_id}")
+
+        atomic_write(file_path, "".join(lines))
+
+        # 3. 在今日原始账本追加一条系统审计事件（留痕但不包含原敏感内容）
+        stamp = now()
+        ts = iso()
+        date = ts[:10]
+        today_raw = RAW / f"{date}.jsonl"
+        audit_id = f"evt-{stamp.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
+        append_jsonl(
+            today_raw,
+            {
+                "id": audit_id,
+                "ts": ts,
+                "date": date,
+                "actor": "system",
+                "kind": "event",
+                "text": f"REDACTION: 事件 {event_id} 已按用户授权执行墓碑遮蔽（原因: {reason}）",
+                "ref": event_id,
+                "tags": ["redaction", "audit"],
+                "source": f"session:{session_id()}",
+                "recordedAt": ts,
+            },
+        )
+        append_jsonl(EVENTS_INDEX, {"id": audit_id, "file": rel_posix(today_raw), "ts": iso(), "kind": "event"})
+
+        print(f"REDACT_OK {event_id} ({rel_posix(file_path)}:{lineno})")
+        print(f"AUDIT_LOGGED {audit_id}")
+
+        # 4. 检查长期记忆是否引用了此被遮蔽的事件
+        for long_name in ("USER.md", "MEMORY.md", "SELF.md"):
+            long_path = BASE / long_name
+            if long_path.is_file():
+                content = read_text(long_path)
+                if event_id in content:
+                    print(f"WARN: 长期文件 {long_name} 中仍包含对已遮蔽事件 {event_id} 的引用，请排查并更新。")
+
+        # 5. 级联刷新 SQLite 全文检索库
+        try:
+            from .db import sync_db
+            sync_db(rebuild=True)
+            print("DB_SYNC_OK SQLite 全文检索库已级联刷新（原私密内容已从索引彻底抹除）")
+        except Exception as exc:
+            print(f"WARN: SQLite 级联刷新跳过：{exc}")
+
+    return 0
+

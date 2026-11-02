@@ -36,7 +36,7 @@ try:
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
-    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_restore, cmd_snapshot
+    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
@@ -51,7 +51,7 @@ except ModuleNotFoundError:
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
-    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_restore, cmd_snapshot
+    from lib.storage import cmd_commit_daily, cmd_note, cmd_pending, cmd_redact, cmd_restore, cmd_snapshot
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
@@ -132,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--snapshot", required=True)
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("redact", help="数据遗忘与墓碑遮蔽（按用户授权抹除敏感事件正文，保留行序与编号连续性）")
+    p.add_argument("--event", required=True, help="要遮蔽的事件编号，例如 evt-20261102-120000-abcd")
+    p.add_argument("--reason", default="用户明确要求删除", help="遮蔽原因（用于系统审计存证）")
+    p.add_argument("--yes", action="store_true", help="确认不可逆执行墓碑遮蔽")
+    p.set_defaults(func=cmd_redact)
 
     p = sub.add_parser("sync-rules", help="从权威 RULES.md 修复工作区镜像")
     p.set_defaults(func=cmd_sync_rules)

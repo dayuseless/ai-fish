@@ -19,6 +19,7 @@ TEST_SUITES = [
     ("feature_selftest.py", "口头授权、现场刷新、升格检测等新特性自测"),
     ("failure_injection.py", "故障注入（坏行/缺失/只读篡改）恢复自测"),
     ("db_selftest.py", "轻量级 SQLite 数据库结构化与 FTS 全文索引自测"),
+    ("cognitive_selftest.py", "认知连续性演进与遗忘遮蔽自测"),
 ]
 
 
@@ -48,7 +49,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=" * 60)
-    print("开始运行 ai-fish 全量自测回归套件 (共 7 组)")
+    print("开始运行 ai-fish 全量自测回归套件 (共 8 组)")
     print("=" * 60)
 
     total_start = time.perf_counter()
@@ -82,7 +83,7 @@ def main() -> int:
     if any_failed:
         print("RESULT: 部分测试失败！")
         return 1
-    print("RESULT: ALL 7 TEST SUITES PASSED (全绿)")
+    print("RESULT: ALL 8 TEST SUITES PASSED (全绿)")
     print("=" * 60)
     return 0
 
