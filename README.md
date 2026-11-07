@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-brightgreen.svg)](https://www.python.org/)
-[![Tests: 8/8 Passing](https://img.shields.io/badge/tests-8%2F8%20passing-success.svg)](tests/)
+[![Tests: 9/9 Passing](https://img.shields.io/badge/tests-9%2F9%20passing-success.svg)](tests/)
 [![Architecture: File--First](https://img.shields.io/badge/architecture-text--first%20%2B%20sqlite-orange.svg)](SPEC.md)
 
 ---
@@ -71,7 +71,13 @@ It treats memory not as a black-box vector blob, but as an **auditable, append-o
    - Automatic pre-modification snapshots (`snapshots/`) with SHA-256 manifests ensure 100% non-destructive recovery.
    - Inter-process mutual exclusion (`index/.lock`) supports Windows (`msvcrt`) and POSIX (`fcntl`).
 7. **Right-to-be-Forgotten Tombstone Protocol (`mem.py redact`)**
-   - Reconciles append-only auditability with user data privacy: in-place tombstoning (`[REDACTED]`), pre-redaction snapshots, audit trail logging, and cascaded FTS index purging.
+   - Deep physical privacy sanitization: in-place tombstoning (`[REDACTED]`), cascade sanitization across raw ledgers, daily logs, and **all historical physical snapshots (`snapshots/*.bak`)**, audit trail logging, and complete FTS index purging. Eliminates plaintext snapshot leakage.
+8. **Batch Transaction & Idempotent Digestion**
+   - 6-phase pipeline (`DISCOVER -> VALIDATE_ALL -> WRITE_PENDING -> VERIFY_BATCH -> COMMIT_BATCH -> DELETE_SOURCE`) with ledger tracking in `digest-batches.jsonl` and `--idempotent` deduplication. Material sources are never deleted on partial failure.
+9. **Unified Visibility Scoping & Access Control**
+   - Granular memory isolation (`admin` vs `public`). Guest agents and external MCP tool callers default to `public` scope, strictly barring access to internal work logs, private credentials, and admin-only system policies.
+10. **Three-Tier Boundary Architecture**
+   - Local Workspace (Authoritative Truth) → Private Git Remote (Gated DR Backup) → Public Engine (Code & MCP Tools).
 
 ---
 
@@ -96,8 +102,9 @@ A classic dilemma in append-only ledgers is user privacy (e.g. GDPR "Right to be
 
 `ai-fish` resolves this with a **Tombstone Redaction Protocol (`mem.py redact`)**:
 1. **In-place Masking**: The sensitive payload in `daily/raw/*.jsonl` is overwritten with `[REDACTED per user request: <reason>]`, retaining the original timestamp, event ID, and line sequence.
-2. **Cascade Purging**: Automatically triggers a SQLite FTS rebuild, permanently expunging private tokens from the search index.
-3. **Safety Snapshot**: Takes an immutable backup in `snapshots/` prior to modification.
+2. **Cascade Markdown & Index Purging**: Automatically sanitizes referenced daily logs (`daily/YYYY-MM-DD.md`), index previews (`events.jsonl`), and triggers a complete SQLite FTS rebuild.
+3. **Deep Snapshot Sanitization**: Scans all pre-existing snapshot files in `snapshots/`, purges the secret payload, and cryptographically re-signs SHA-256 hashes in `MANIFEST.jsonl`. Does *not* create pre-redaction plaintext backups. Post-redaction state is safely snapshotted.
+4. **Git Remote Boundary**: Workspace & snapshot sanitization is immediate and total. Historical Git commits already pushed to remote repositories require manual offline rewriting (`git filter-repo`) if remote purging is needed.
 4. **Audit Trail**: Appends a transparent system event logging the redaction event ID, authorization, and timestamp.
 5. **Reference Alert**: Scans `USER.md`, `MEMORY.md`, and `SELF.md` to alert operators if long-term memory cited the tombstoned event.
 

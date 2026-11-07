@@ -436,3 +436,65 @@ python -X utf8 ai-fish/bin/mem.py db sync
 - 手动演练：`--dry-run`（只检查）、`--no-push`（只提交）。
 - 令牌最小化（2026-10-28）：旧 classic PAT 带 `admin:enterprise`/`delete_repo`，已换成仅 `repo` + `admin:repo_hook`；classic PAT 无 API 可删，旧令牌需用户手动吊销。
 - 恢复限制：仓库不含工作区外的 `RULES.md` 与 `RULES.sha256`。全毁时用镜像重建并重算封印——**那已不是同一个封印**，恢复时须记事件说明。
+
+---
+
+## 十七、数据遗忘边界与快照物理清洗
+
+`mem.py redact --event <id> --reason <text> --yes` 实现了数据遗忘与隐私遮蔽：
+
+1. **工作区与日志遮蔽**：将目标事件在 `daily/raw/*.jsonl` 中的正文就地重写为 `[REDACTED per user request: <reason>]`，保留行序、时间戳与哈希链编号。级联清理 `daily/*.md` 中的引用，并在 `index/events.jsonl` 中将预览文字墓碑化。
+2. **快照深度物理清洗**：禁止生成捕获敏感明文的遮蔽前快照；自动扫描 `snapshots/` 下所有历史 `.bak` 备份，清洗其中残留的目标事件明文，并同步重算 SHA-256 签名更新 `snapshots/MANIFEST.jsonl`。遮蔽完成后对安全墓碑状态拍摄不可覆盖快照存证。
+3. **全文索引彻底擦除**：自动触发 SQLite `fts_memory` 全量重建，确保敏感词从 FTS 索引彻底抹除。
+4. **Git 提交历史边界说明**：
+   - 工作区与快照物理清洗是即时的、彻底的。
+   - 若敏感内容在过去已经被 `backup.py` 提交并推送到远端 Git 仓库，Git 的历史 commit 对象依然保留历史快照。对已推远端历史的彻底清除属于离线仓库重构范畴（需借助 `git filter-repo` / BFG 并由用户手动 force-push），日常自动化工具遵守不改写 Git 远端历史原则。
+
+---
+
+## 十八、访问控制与 Visibility 作用域
+
+为支持多智能体协同、外部 MCP 工具访问与公开聊天机器人共享记忆库，数据访问层实现统一的权限作用域控制：
+
+1. **作用域划分**：
+   - `admin`（默认/管理模式）：全量访问长期记忆、日记与原始事件日志，供系统维护会话使用。
+   - `public`（公开/访客模式）：仅访问明确标记或启发式判定为公开的内容（如公开规则、开放人设、通用事实）。严格屏蔽内部操作日志、未公开用户偏好及管理策略。
+2. **下沉至数据访问层**：
+   - SQLite 虚拟表 `fts_memory` 引入 `visibility UNINDEXED` 列，查询时通过 `scope == "public"` 追加 `AND visibility = 'public'`。
+   - `long_term_items` 与 `raw_events` 查询接口原生支持 `scope` 过滤。
+   - 纯文本检索回退路径在 `public` 模式下仅扫描 `RULES.md` 及带公开标签的原始事件，杜绝纯文本回退绕过权限。
+3. **MCP 服务集成**：
+   - `plugins/mcp-memory-server` 默认作用域为 `public`（可通过环境变量 `AI_FISH_SCOPE` 配置），确保外部 LLM 客户端无法直接窥探内部高敏感日志。
+
+---
+
+## 十九、提炼批次事务与落库幂等协议
+
+QQ 及外部非结构化消息提炼入库（`bin/qq-digest-auto.mjs`）遵循严格的 6 阶段原子事务流程：
+
+```
+DISCOVER -> VALIDATE_ALL -> WRITE_PENDING -> VERIFY_BATCH -> COMMIT_BATCH -> DELETE_SOURCE
+```
+
+1. **VALIDATE_ALL（全量预校验）**：首行清单 `manifest.files` 合法性检查 + 所有记录 JSON 语法与 `kind` 枚举检查。任何一条校验失败，整批拒绝并记入 `index/digest-batches.jsonl`（`status: 'rejected'`），保留所有原始素材与 apply 文件。
+2. **WRITE_PENDING（幂等落库）**：调用 `mem.py note --idempotent`。若今日日志中已存在相同 `(kind, text, ref, actor)`，跳过追加返回 `NOTE_IDEMPOTENT_SKIP`，确保部分失败后重试不产生脏数据与重复事件。
+3. **VERIFY_BATCH（完整性校验）**：写入完成后自动触发 `mem.py verify`。校验失败立即中止，保留素材。
+4. **COMMIT_BATCH（事务提交）**：在 `index/digest-batches.jsonl` 登记 `status: 'committed'`、记录数与素材清单。
+5. **DELETE_SOURCE（素材物理清理）**：仅在整批 100% 验证通过并提交后，方清理 `inbox/qq-*.md` 与 apply 文件。
+6. **并发互斥原子锁**：锁获取采用原子系统调用 `fs.openSync(LOCK, 'wx')`，杜绝检查-写入竞争条件，支持 25 分钟僵尸锁自动回收。
+
+---
+
+## 二十、三层存储与灾备边界
+
+ai-fish 明确划分三层系统边界：
+
+1. **第一层：本地工作区（权威事实源）**：
+   - 路径：`D:\记忆\ai-fish`
+   - 包含完整的权威只追加原始账本、分日日记、快照清单与 SQLite 派生索引。
+2. **第二层：授权私有灾备仓（Private DR Remote）**：
+   - 路径：用户授权的私有 Git 远端
+   - 由 `bin/backup.py` 在每日凌晨执行，必须满足 `verify` + `audit` 全绿且工作区通过凭据泄露安全扫描（无明文 API Key/Token）方可提交推送。每次推送均明确在日志中记录备份目标远端 URL。
+3. **第三层：公开开源引擎（Code & Tooling Engine）**：
+   - 路径：`D:\ai-fish-release`（`github.com/dayuseless/ai-fish`）
+   - 纯净代码库、MCP 协议服务、集成适配器与通用测试套件。零记忆正文、零私密数据、零运行时日志。

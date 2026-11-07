@@ -175,11 +175,13 @@ def memory_lock(timeout: float = 30.0):
     When the process terminates or exits the context, lock is reliably released.
     """
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK_PATH.open("a+b") as handle:
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"L")
-            handle.flush()
+    if not LOCK_PATH.exists() or LOCK_PATH.stat().st_size == 0:
+        try:
+            with LOCK_PATH.open("wb") as f:
+                f.write(b"L")
+        except OSError:
+            pass
+    with LOCK_PATH.open("r+b") as handle:
         handle.seek(0)
         deadline = time.monotonic() + timeout
 

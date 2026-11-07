@@ -52,7 +52,8 @@ const TOOLS = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search keywords or phrases' },
-        limit: { type: 'number', description: 'Max results to return (default 10)' }
+        limit: { type: 'number', description: 'Max results to return (default 10)' },
+        scope: { type: 'string', enum: ['admin', 'public'], description: 'Access control scope: admin (all) or public (sanitized/public memory only, default public)' }
       },
       required: ['query']
     }
@@ -63,7 +64,8 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Item key or ID' }
+        key: { type: 'string', description: 'Item key or ID' },
+        scope: { type: 'string', enum: ['admin', 'public'], description: 'Access control scope: admin or public (default public)' }
       },
       required: ['key']
     }
@@ -114,17 +116,24 @@ function handleToolCall(name, args) {
       const db = getMemoryDb();
       if (!db) return { text: 'Memory database not found or empty. Run `python bin/mem.py db sync` first.' };
       const limit = Math.min(args.limit || 10, 50);
+      const scope = args.scope || process.env.AI_FISH_SCOPE || 'public';
       const cleanQ = args.query.replace(/['"*]/g, ' ').trim();
       if (!cleanQ) return { text: 'Query is empty.' };
       try {
-        const stmt = db.prepare(`
+        let sql = `
           SELECT category, doc, item_id, title, snippet(fts_memory, 3, '[', ']', '...', 15) as snip
           FROM fts_memory
           WHERE fts_memory MATCH ?
-          LIMIT ?
-        `);
-        const rows = stmt.all(cleanQ, limit);
-        if (!rows.length) return { text: `No matches found for "${cleanQ}".` };
+        `;
+        const params = [cleanQ];
+        if (scope === 'public') {
+          sql += ` AND visibility = 'public'`;
+        }
+        sql += ` LIMIT ?`;
+        params.push(limit);
+        const stmt = db.prepare(sql);
+        const rows = stmt.all(...params);
+        if (!rows.length) return { text: `No matches found for "${cleanQ}" (scope=${scope}).` };
         const lines = rows.map((r) => `[${r.category}] ${r.doc} (${r.item_id}) ${r.title}\n  ${r.snip}`);
         return { text: lines.join('\n\n') };
       } catch (err) {
@@ -134,9 +143,16 @@ function handleToolCall(name, args) {
     case 'mem_read_item': {
       const db = getMemoryDb();
       if (!db) return { text: 'Memory database not found.' };
-      const stmt = db.prepare(`SELECT * FROM long_term_items WHERE item_key = ? OR id = ? LIMIT 1`);
-      const row = stmt.get(args.key, args.key);
-      if (!row) return { text: `Item "${args.key}" not found.` };
+      const scope = args.scope || process.env.AI_FISH_SCOPE || 'public';
+      let sql = `SELECT * FROM long_term_items WHERE (item_key = ? OR id = ?)`;
+      const params = [args.key, args.key];
+      if (scope === 'public') {
+        sql += ` AND visibility = 'public'`;
+      }
+      sql += ` LIMIT 1`;
+      const stmt = db.prepare(sql);
+      const row = stmt.get(...params);
+      if (!row) return { text: `Item "${args.key}" not found (scope=${scope}).` };
       return { text: `### [${row.item_key}] ${row.title}\n**Doc**: ${row.doc} | **Section**: ${row.section}\n**Evidence**: ${row.evidence}\n\n${row.content}` };
     }
     case 'mem_note': {

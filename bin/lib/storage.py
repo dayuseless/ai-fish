@@ -135,9 +135,34 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
     date = ts[:10]
     eid = f"evt-{now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
     raw_path = RAW / f"{date}.jsonl"
-    line_no = count_lines(raw_path) + 1
     ref = args.ref or ""
     tags = list(args.tag or [])
+
+    # 幂等检查：若指定 --idempotent 且今日原始日志中已存在相同 (kind, text, ref, actor)，直接跳过追加
+    if getattr(args, "idempotent", False) and raw_path.is_file():
+        try:
+            with raw_path.open("r", encoding="utf-8-sig", errors="replace") as rf:
+                for rline in rf:
+                    rline_str = rline.strip()
+                    if not rline_str:
+                        continue
+                    try:
+                        robj = json.loads(rline_str)
+                        if (
+                            robj.get("kind") == args.kind
+                            and robj.get("text") == text
+                            and (robj.get("ref") or "") == ref
+                            and robj.get("actor") == args.actor
+                        ):
+                            existing_id = robj.get("id", "evt-unknown")
+                            print(f"NOTE_IDEMPOTENT_SKIP {existing_id} {rel_posix(raw_path)}")
+                            return 0
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    line_no = count_lines(raw_path) + 1
 
     # 计算事件级哈希链 (Event-Level Hash Chain)
     prev_hash = "GENESIS_00000000"
@@ -207,15 +232,21 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
             (id, ts, date, kind, actor, text, ref, tags, is_pending)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
             """, (eid, ts, date, args.kind, args.actor, text, ref, tags_str))
+            is_pub = "public" if (
+                any(t in tags_str.lower() for t in ("public", "grant", "rules", "qq", "soli", "cross-session", "watchdog", "persona", "b站"))
+                or any(w in text for w in ("B站", "索利", "QQ链路", "跨会话", "看门狗", "授权", "规则"))
+                or "qq-digest" in ref.lower() or "qq" in ref.lower()
+            ) else "admin_only"
             conn.execute("""
-            INSERT INTO fts_memory (category, doc, item_id, title, body, tags)
-            VALUES ('raw_event', ?, ?, ?, ?, ?)
+            INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
+            VALUES ('raw_event', ?, ?, ?, ?, ?, ?)
             """, (
                 rel_posix(raw_path),
                 cjk_tokenize(eid),
                 cjk_tokenize(f"[{args.kind}] {args.actor}"),
                 cjk_tokenize(text),
                 cjk_tokenize(f"{ref} {tags_str}"),
+                is_pub,
             ))
             conn.execute("INSERT OR REPLACE INTO db_meta (key, value) VALUES ('raw_event_count', (SELECT count(*) FROM raw_events));")
             conn.execute("INSERT OR REPLACE INTO db_meta (key, value) VALUES ('last_note_at', ?);", (ts,))
@@ -524,10 +555,97 @@ def cmd_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sanitize_snapshots_for_event(event_id: str, reason: str) -> int:
+    """物理清理所有包含目标事件的既有快照文件并更新 MANIFEST.jsonl。"""
+    sanitized_count = 0
+    if not SNAPSHOTS.is_dir():
+        return 0
+
+    manifest_rows, errors = read_jsonl(MANIFEST_PATH)
+    manifest_map = {r.get("snapshot"): r for r in manifest_rows if r.get("snapshot")}
+
+    for bak_file in SNAPSHOTS.rglob("*.bak"):
+        if not bak_file.is_file():
+            continue
+        try:
+            content = bak_file.read_text(encoding="utf-8-sig", errors="replace")
+        except Exception:
+            continue
+
+        if event_id not in content:
+            continue
+
+        lines = content.splitlines()
+        new_lines = []
+        file_modified = False
+        is_jsonl = any(l.strip().startswith("{") and l.strip().endswith("}") for l in lines[:5] if l.strip())
+
+        if is_jsonl:
+            for line in lines:
+                l_str = line.strip()
+                if not l_str:
+                    new_lines.append(line)
+                    continue
+                try:
+                    obj = json.loads(l_str)
+                    if obj.get("id") == event_id:
+                        obj["text"] = f"[REDACTED per user request: {reason}]"
+                        obj["redacted"] = True
+                        obj["redacted_at"] = iso()
+                        obj["redact_reason"] = reason
+                        new_lines.append(json.dumps(obj, ensure_ascii=False))
+                        file_modified = True
+                    else:
+                        new_lines.append(line)
+                except Exception:
+                    new_lines.append(line)
+        else:
+            for line in lines:
+                if event_id in line:
+                    prefix_match = re.match(r"^(\s*[-*]?\s*)", line)
+                    leading = prefix_match.group(1) if prefix_match else "- "
+                    new_lines.append(f"{leading}[REDACTED: 已按用户授权擦除敏感内容] `{event_id}`")
+                    file_modified = True
+                else:
+                    new_lines.append(line)
+
+        if file_modified:
+            new_text = "\n".join(new_lines) + ("\n" if content.endswith("\n") else "")
+            atomic_write(bak_file, new_text)
+            sanitized_count += 1
+            rel_snap = rel_posix(bak_file)
+            if rel_snap in manifest_map:
+                manifest_map[rel_snap]["sha256"] = sha256_file(bak_file)
+                manifest_map[rel_snap]["bytes"] = bak_file.stat().st_size
+
+    if sanitized_count > 0:
+        ordered_manifest = [manifest_map.get(r.get("snapshot"), r) for r in manifest_rows]
+        manifest_text = "\n".join(json.dumps(r, ensure_ascii=False) for r in ordered_manifest) + "\n"
+        atomic_write(MANIFEST_PATH, manifest_text)
+
+    return sanitized_count
+
+
+def _sanitize_events_index_for_event(event_id: str) -> None:
+    """清理 index/events.jsonl 中的预览文字，避免敏感内容留在索引行。"""
+    if not EVENTS_INDEX.is_file():
+        return
+    rows, errors = read_jsonl(EVENTS_INDEX)
+    modified = False
+    for r in rows:
+        if r.get("id") == event_id:
+            r["preview"] = "[REDACTED: 已按用户授权擦除敏感内容]"
+            modified = True
+    if modified:
+        text = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
+        atomic_write(EVENTS_INDEX, text)
+
+
 def cmd_redact(args: argparse.Namespace) -> int:
     """数据遗忘与墓碑遮蔽协议 (Tombstone Redaction Protocol)。
     不破坏日志物理行序与事件编号连续性，将指定事件正文彻底遮蔽替换为 [REDACTED]，
-    自动执行修改前快照、审计记录登记、长期记忆引用排查及 SQLite 全文索引级联更新。
+    深度清理既有快照与索引预览，禁止生成保存敏感明文的遮蔽前快照，
+    并在遮蔽完成后对墓碑状态执行不可覆盖快照、长期记忆引用排查及 SQLite 全文索引级联更新。
     """
     cfg = load_config()
     require_seal(cfg)
@@ -555,10 +673,7 @@ def cmd_redact(args: argparse.Namespace) -> int:
         return 2
 
     with memory_lock():
-        # 1. 执行修改前自动快照
-        snapshot_file(rel_posix(file_path), f"redact {event_id} 前自动快照")
-
-        # 2. 原子重写 JSONL 文件，将正文替换为墓碑标记
+        # 1. 原子重写目标 JSONL 文件，将正文替换为墓碑标记（注意：不建立捕获明文敏感词的修改前快照）
         lines = []
         modified = False
         with file_path.open("r", encoding="utf-8-sig", errors="replace") as f:
@@ -586,7 +701,35 @@ def cmd_redact(args: argparse.Namespace) -> int:
 
         atomic_write(file_path, "".join(lines))
 
-        # 3. 在今日原始账本追加一条系统审计事件（留痕但不包含原敏感内容）
+        # 2. 级联清理已固化日记文件 (daily/20??-??-??.md) 中的相关引用与摘要（同样不拍摄包含明文的快照）
+        daily_files = sorted(DAILY.glob("20??-??-??.md"))
+        for daily_path in daily_files:
+            daily_content = read_text(daily_path)
+            if event_id in daily_content:
+                new_d_lines = []
+                for d_line in daily_content.splitlines():
+                    if event_id in d_line:
+                        prefix_match = re.match(r"^(\s*[-*]?\s*)", d_line)
+                        leading = prefix_match.group(1) if prefix_match else "- "
+                        new_d_lines.append(f"{leading}[REDACTED: 已按用户授权擦除敏感内容] `{event_id}`")
+                    else:
+                        new_d_lines.append(d_line)
+                atomic_write(daily_path, "\n".join(new_d_lines) + "\n")
+                print(f"DAILY_REDACT_OK {rel_posix(daily_path)} 中的 `{event_id}` 已同步遮蔽")
+
+        # 3. 深度扫描并清理既有快照目录 snapshots/，同步更新 MANIFEST.jsonl
+        snaps_cleaned = _sanitize_snapshots_for_event(event_id, reason)
+        if snaps_cleaned > 0:
+            print(f"SNAPSHOTS_SANITIZED {snaps_cleaned} 个既有快照文件已完成物理清洗与哈希重签")
+
+        # 4. 清理 index/events.jsonl 中的预览文字
+        _sanitize_events_index_for_event(event_id)
+
+        # 5. 对已经遮蔽完毕的安全文件建立事后墓碑快照（确保存证归档，且不泄漏敏感原词）
+        dest = snapshot_file(rel_posix(file_path), f"redact {event_id} 墓碑记录快照")
+        print(f"TOMBSTONE_SNAPSHOT_OK {rel_posix(dest)}")
+
+        # 6. 在今日原始账本追加一条系统审计事件（留痕但不包含原敏感内容）
         stamp = now()
         ts = iso()
         date = ts[:10]
@@ -612,25 +755,7 @@ def cmd_redact(args: argparse.Namespace) -> int:
         print(f"REDACT_OK {event_id} ({rel_posix(file_path)}:{lineno})")
         print(f"AUDIT_LOGGED {audit_id}")
 
-        # 3.5 级联清理已固化日记文件 (daily/20??-??-??.md) 中的相关引用与摘要
-        daily_files = sorted(DAILY.glob("20??-??-??.md"))
-        for daily_path in daily_files:
-            daily_content = read_text(daily_path)
-            if event_id in daily_content:
-                snapshot_file(rel_posix(daily_path), f"redact {event_id} 级联清理日记前快照")
-                new_d_lines = []
-                for d_line in daily_content.splitlines():
-                    if event_id in d_line:
-                        # 识别列表前缀，将敏感内容替换为统一的墓碑提示
-                        prefix_match = re.match(r"^(\s*[-*]?\s*)", d_line)
-                        leading = prefix_match.group(1) if prefix_match else "- "
-                        new_d_lines.append(f"{leading}[REDACTED: 已按用户授权擦除敏感内容] `{event_id}`")
-                    else:
-                        new_d_lines.append(d_line)
-                atomic_write(daily_path, "\n".join(new_d_lines) + "\n")
-                print(f"DAILY_REDACT_OK {rel_posix(daily_path)} 中的 `{event_id}` 已同步遮蔽")
-
-        # 4. 检查长期记忆是否引用了此被遮蔽的事件
+        # 7. 检查长期记忆是否引用了此被遮蔽的事件
         for long_name in ("USER.md", "MEMORY.md", "SELF.md"):
             long_path = BASE / long_name
             if long_path.is_file():
@@ -638,10 +763,10 @@ def cmd_redact(args: argparse.Namespace) -> int:
                 if event_id in content:
                     print(f"WARN: 长期文件 {long_name} 中仍包含对已遮蔽事件 {event_id} 的引用，请排查并更新。")
 
-        # 5. 级联刷新 SQLite 全文检索库
+        # 8. 级联刷新 SQLite 全文检索库
         try:
-            from .db import sync_db
-            sync_db(rebuild=True)
+            from .db import sync_all
+            sync_all(rebuild=True)
             print("DB_SYNC_OK SQLite 全文检索库已级联刷新（原私密内容已从索引彻底抹除）")
         except Exception as exc:
             print(f"WARN: SQLite 级联刷新跳过：{exc}")

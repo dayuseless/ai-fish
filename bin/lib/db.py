@@ -143,6 +143,7 @@ def init_db(conn: sqlite3.Connection, drop_existing: bool = False) -> None:
         title,
         body,
         tags,
+        visibility UNINDEXED,
         tokenize='unicode61'
     );
     """)
@@ -300,14 +301,15 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
 
             # FTS index
             cur.execute("""
-            INSERT INTO fts_memory (category, doc, item_id, title, body, tags)
-            VALUES ('long_term', ?, ?, ?, ?, ?)
+            INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
+            VALUES ('long_term', ?, ?, ?, ?, ?, ?)
             """, (
                 it["doc"],
                 cjk_tokenize(it["key"]),
                 cjk_tokenize(it["title"]),
                 cjk_tokenize(it["content"]),
                 cjk_tokenize(f"{it['section']} {it['evidence']}"),
+                is_pub,
             ))
             lt_count += 1
 
@@ -350,14 +352,15 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
 
         rel_doc = rel_posix(path)
         cur.execute("""
-        INSERT INTO fts_memory (category, doc, item_id, title, body, tags)
-        VALUES ('raw_event', ?, ?, ?, ?, ?)
+        INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
+        VALUES ('raw_event', ?, ?, ?, ?, ?, ?)
         """, (
             rel_doc,
             cjk_tokenize(eid),
             cjk_tokenize(f"[{kind}] {actor}"),
             cjk_tokenize(text),
             cjk_tokenize(f"{ref} {tags_str}"),
+            is_pub,
         ))
         raw_count += 1
 
@@ -382,14 +385,15 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
             """, (d_date, rel_df, b_count, len(d_text), d_text, now_str))
 
             cur.execute("""
-            INSERT INTO fts_memory (category, doc, item_id, title, body, tags)
-            VALUES ('daily_log', ?, ?, ?, ?, ?)
+            INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
+            VALUES ('daily_log', ?, ?, ?, ?, ?, ?)
             """, (
                 rel_df,
                 cjk_tokenize(d_date),
                 cjk_tokenize(f"Daily {d_date}"),
                 cjk_tokenize(d_text),
                 cjk_tokenize(d_date),
+                'admin_only',
             ))
             daily_count += 1
 
@@ -412,8 +416,14 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
     }
 
 
-def search_fts(query: str, limit: int = 50, category: str | None = None, base: Path | None = None) -> list[dict[str, Any]]:
-    """Executes high-speed ranked FTS search across memory store."""
+def search_fts(
+    query: str,
+    limit: int = 50,
+    category: str | None = None,
+    scope: str = "admin",
+    base: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Executes high-speed ranked FTS search across memory store with visibility scoping."""
     db_path = get_db_path(base)
     if not db_path.is_file():
         return []
@@ -425,7 +435,7 @@ def search_fts(query: str, limit: int = 50, category: str | None = None, base: P
     conn = get_db(base)
     try:
         sql = """
-        SELECT category, doc, item_id, title, body, tags, rank
+        SELECT category, doc, item_id, title, body, tags, visibility, rank
         FROM fts_memory
         WHERE fts_memory MATCH ?
         """
@@ -433,6 +443,8 @@ def search_fts(query: str, limit: int = 50, category: str | None = None, base: P
         if category:
             sql += " AND category = ?"
             params.append(category)
+        if scope == "public":
+            sql += " AND visibility = 'public'"
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
 
@@ -457,18 +469,22 @@ def search_fts(query: str, limit: int = 50, category: str | None = None, base: P
         conn.close()
 
 
-def get_long_term_item(item_key: str, base: Path | None = None) -> dict[str, Any] | None:
+def get_long_term_item(item_key: str, scope: str = "admin", base: Path | None = None) -> dict[str, Any] | None:
     db_path = get_db_path(base)
     if not db_path.is_file():
         return None
     conn = get_db(base)
     try:
-        cur = conn.execute("""
-        SELECT id, item_key, doc, section, title, content, evidence, doc_version, synced_at
+        sql = """
+        SELECT id, item_key, doc, section, title, content, evidence, doc_version, visibility, synced_at
         FROM long_term_items
-        WHERE item_key = ? OR id = ?
-        LIMIT 1
-        """, (item_key, item_key))
+        WHERE (item_key = ? OR id = ?)
+        """
+        params: list[Any] = [item_key, item_key]
+        if scope == "public":
+            sql += " AND visibility = 'public'"
+        sql += " LIMIT 1"
+        cur = conn.execute(sql, params)
         row = cur.fetchone()
         if not row:
             return None
@@ -482,6 +498,7 @@ def query_raw_events(
     actor: str | None = None,
     date: str | None = None,
     is_pending: bool | None = None,
+    scope: str = "admin",
     limit: int = 50,
     base: Path | None = None,
 ) -> list[dict[str, Any]]:
@@ -504,6 +521,9 @@ def query_raw_events(
         if is_pending is not None:
             clauses.append("is_pending = ?")
             params.append(1 if is_pending else 0)
+
+        if scope == "public":
+            clauses.append("visibility = 'public'")
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = f"SELECT id, ts, date, kind, actor, text, ref, tags, is_pending FROM raw_events{where} ORDER BY ts DESC LIMIT ?"
@@ -593,7 +613,8 @@ def cmd_db(args: argparse.Namespace) -> int:
 
     if action == "get":
         item_key = args.key.strip()
-        item = get_long_term_item(item_key)
+        scope = getattr(args, "scope", "admin")
+        item = get_long_term_item(item_key, scope=scope)
         if not item:
             print(f"未在长期记忆数据库中找到条目: {item_key}")
             return 1
@@ -626,11 +647,13 @@ def cmd_db(args: argparse.Namespace) -> int:
             conn.close()
 
     if action == "events":
+        scope = getattr(args, "scope", "admin")
         evs = query_raw_events(
             kind=getattr(args, "kind", None),
             actor=getattr(args, "actor", None),
             date=getattr(args, "date", None),
             is_pending=True if getattr(args, "pending", False) else None,
+            scope=scope,
             limit=getattr(args, "limit", 50),
         )
         print(f"RAW_EVENTS ({len(evs)} 条匹配):")

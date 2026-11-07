@@ -9,20 +9,26 @@ from .core import BASE, DAILY, WORKSPACE, MemError, ensure_dirs, load_config, re
 from .storage import all_raw_events
 
 
-def _search_text(query: str, limit: int) -> list[tuple[str, int | str, str]]:
+def _search_text(query: str, limit: int, scope: str = "admin") -> list[tuple[str, int | str, str]]:
     terms = [t.casefold() for t in query.split() if t]
     results: list[tuple[str, int | str, str]] = []
     cfg = load_config()
 
-    files = [
-        BASE / "RULES.md",
-        BASE / "SELF.md",
-        BASE / "USER.md",
-        BASE / "MEMORY.md",
-        WORKSPACE / "AGENTS.md",
-        Path(cfg.get("canonical_rules", "")),
-    ]
-    files += sorted(DAILY.glob("20??-??-??.md"))
+    if scope == "public":
+        files = [
+            BASE / "RULES.md",
+            Path(cfg.get("canonical_rules", "")),
+        ]
+    else:
+        files = [
+            BASE / "RULES.md",
+            BASE / "SELF.md",
+            BASE / "USER.md",
+            BASE / "MEMORY.md",
+            WORKSPACE / "AGENTS.md",
+            Path(cfg.get("canonical_rules", "")),
+        ]
+        files += sorted(DAILY.glob("20??-??-??.md"))
     seen_files = set()
     for path in files:
         if not path.is_file():
@@ -42,6 +48,19 @@ def _search_text(query: str, limit: int) -> list[tuple[str, int | str, str]]:
 
     events, _ = all_raw_events()
     for path, lineno, obj in events:
+        if scope == "public":
+            tags_str = " ".join(obj.get("tags", [])) if isinstance(obj.get("tags"), list) else str(obj.get("tags", ""))
+            text = str(obj.get("text", ""))
+            ref = str(obj.get("ref", ""))
+            is_pub = (
+                obj.get("visibility") == "public"
+                or any(t in tags_str.lower() for t in ("public", "grant", "rules", "qq", "soli", "cross-session", "watchdog", "persona", "b站"))
+                or any(w in text for w in ("B站", "索利", "QQ链路", "跨会话", "看门狗", "授权", "规则"))
+                or "qq-digest" in ref.lower() or "qq" in ref.lower()
+            )
+            if not is_pub:
+                continue
+
         hay = " ".join(
             str(obj.get(k, "")) for k in ("id", "kind", "text", "ref", "tags")
         ).casefold()
@@ -62,14 +81,15 @@ def cmd_search(args: argparse.Namespace) -> int:
         raise MemError("查询为空")
     limit = args.limit or int(cfg.get("max_search_results", 80))
 
+    scope = getattr(args, "scope", "admin")
     use_text_only = getattr(args, "text_only", False)
     if not use_text_only:
         try:
             from .db import get_db_path, search_fts
             if get_db_path().is_file():
-                fts_rows = search_fts(args.query, limit=limit)
+                fts_rows = search_fts(args.query, limit=limit, scope=scope)
                 if fts_rows:
-                    print(f"SEARCH \"{args.query}\" (FTS5) -> {len(fts_rows)} hit(s)")
+                    print(f"SEARCH \"{args.query}\" (FTS5, scope={scope}) -> {len(fts_rows)} hit(s)")
                     for r in fts_rows[:limit]:
                         snippet = r["body"][:120].replace("\n", " ")
                         title = f" [{r['title']}]" if r["title"] else ""
@@ -80,8 +100,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         except Exception:
             pass  # Fall back to text search on any DB failure
 
-    results = _search_text(args.query, limit)
-    print(f"SEARCH \"{args.query}\" -> {len(results)} hit(s)")
+    results = _search_text(args.query, limit, scope=scope)
+    print(f"SEARCH \"{args.query}\" (scope={scope}) -> {len(results)} hit(s)")
     for path, lineno, line in results[:limit]:
         print(f"{path}:{lineno}: {line}")
     if len(results) > limit:

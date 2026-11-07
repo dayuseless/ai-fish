@@ -304,6 +304,25 @@ def test_todo_rollover(tmp: Path, dates: dict) -> None:
     assert "⏰1d" in res_roll.stdout, "应带有 1 天时滞标记"
 
 
+def test_note_idempotency(tmp: Path) -> None:
+    res1 = run(tmp, "note", "--kind", "event", "--text", "幂等测试事件001", "--ref", "ref-idemp-1", "--idempotent")
+    assert res1.returncode == 0, f"res1 failed: {res1.stdout} {res1.stderr}"
+    assert "NOTE_OK" in res1.stdout
+    evt_id = res1.stdout.split()[1]
+
+    # 携带 --idempotent 写入相同特征的事件，应当返回 NOTE_IDEMPOTENT_SKIP 且不追加重复行
+    res2 = run(tmp, "note", "--kind", "event", "--text", "幂等测试事件001", "--ref", "ref-idemp-1", "--idempotent")
+    assert res2.returncode == 0, f"res2 failed: {res2.stdout} {res2.stderr}"
+    assert "NOTE_IDEMPOTENT_SKIP" in res2.stdout
+    assert evt_id in res2.stdout
+
+    # 验证物理文件中只存在唯一一条该事件
+    raw_files = list((tmp / "ai-fish" / "daily" / "raw").glob("*.jsonl"))
+    assert len(raw_files) >= 1
+    content = "\n".join(f.read_text(encoding="utf-8") for f in raw_files)
+    assert content.count("幂等测试事件001") == 1
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="mem-feat-"))
     try:
@@ -323,6 +342,10 @@ def main() -> int:
         print("4. Testing todo --rollover...")
         test_todo_rollover(tmp, dates)
         print("   PASS: todo --rollover")
+
+        print("5. Testing note --idempotent...")
+        test_note_idempotency(tmp)
+        print("   PASS: note --idempotent")
 
         print("\nALL FEATURE SELFTESTS PASSED!")
         return 0

@@ -170,7 +170,24 @@ def test_db_workflow():
         assert res.returncode == 0
         assert "FTS5" in res.stdout
 
-    print("PASS db_selftest: all 11 SQLite DB test cases verified.")
+        # 12. Test visibility scoping (--scope public vs admin)
+        res_pub_u = run(tmp, "search", "--query", "不汇报记忆写入", "--scope", "public")
+        assert res_pub_u.returncode == 0
+        assert "0 hit(s)" in res_pub_u.stdout or "NO_MATCHES" in res_pub_u.stdout
+
+        res_adm_u = run(tmp, "search", "--query", "不汇报记忆写入", "--scope", "admin")
+        assert res_adm_u.returncode == 0
+        assert "U-009" in res_adm_u.stdout
+
+        res_pub_get_u = run(tmp, "db", "get", "U-009", "--scope", "public")
+        assert res_pub_get_u.returncode != 0
+        assert "未在长期记忆数据库中找到条目" in res_pub_get_u.stdout
+
+        res_pub_get_f = run(tmp, "db", "get", "F-001", "--scope", "public")
+        assert res_pub_get_f.returncode == 0
+        assert "运行环境" in res_pub_get_f.stdout
+
+    print("PASS db_selftest: all 12 SQLite DB & visibility test cases verified.")
 
 
 if __name__ == "__main__":

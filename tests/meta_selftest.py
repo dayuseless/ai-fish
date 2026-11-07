@@ -35,8 +35,8 @@ def main() -> int:
         assert needle in text, f"META.md missing: {needle}"
 
     assert spec.is_file() and spec.stat().st_size > 0, "SPEC.md missing/empty"
-    # SPEC 软上限 25 KB：2026-10-31 因新增 §五「归档带现场快照」由 24 KB 上调（commit a920739）。
-    assert spec.stat().st_size <= 25000, f"SPEC.md too large: {spec.stat().st_size} B"
+    # SPEC 软上限 30 KB：2026-11-07 因落实审计整改（新增 §十七数据遗忘清洗、§十八访问控制、§十九批次事务、§二十三层边界）上调。
+    assert spec.stat().st_size <= 30000, f"SPEC.md too large: {spec.stat().st_size} B"
 
     brief = run("session-start", "--brief")
     assert brief.returncode == 0, brief.stderr

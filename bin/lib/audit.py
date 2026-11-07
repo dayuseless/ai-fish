@@ -177,7 +177,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         "USER.md": 16000,
         "RULES.md": 16000,
         "META.md": 6000,
-        "SPEC.md": 25000,
+        "SPEC.md": 30000,  # 2026-11-07 审计整改：新增§十七~§二十上调
     }
     for name, limit in size_limits.items():
         size = (BASE / name).stat().st_size if (BASE / name).is_file() else 0

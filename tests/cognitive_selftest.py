@@ -150,6 +150,12 @@ def test_tombstone_redaction(f: dict):
         encoding="utf-8"
     )
 
+    # 拍摄历史快照以测试深度快照清洗机制 (Snapshot Sanitization)
+    raw_path_rel = f"daily/raw/{today_str}.jsonl"
+    run(root, "snapshot", "--file", raw_path_rel, "--note", "历史例行快照包含机密")
+    daily_path_rel = f"daily/{today_str}.md"
+    run(root, "snapshot", "--file", daily_path_rel, "--note", "历史日记快照包含机密")
+
     print("  [Step 5] Executing tombstone redaction protocol...")
     # Attempt without --yes should refuse and ask for confirmation
     refuse_res = run(root, "redact", "--event", secret_evt, "--reason", "测试凭据清除")
@@ -180,6 +186,14 @@ def test_tombstone_redaction(f: dict):
     assert secret_text not in res_search_after.stdout
     assert "0 hit(s)" in res_search_after.stdout or "NO_MATCHES" in res_search_after.stdout
     print("  -> Sensitive data thoroughly purged from raw file, daily log, and SQLite FTS.")
+
+    # CRITICAL: 验证既有快照中的敏感机密已被物理清洗与重签，快照目录不泄漏原词
+    snap_files = list((mem_dir / "snapshots").rglob("*.bak"))
+    assert len(snap_files) > 0, "快照目录应当存在快照"
+    for sf in snap_files:
+        sf_content = sf.read_text(encoding="utf-8", errors="replace")
+        assert secret_text not in sf_content, f"CRITICAL PRIVACY LEAK: 敏感文本仍在快照文件中残留: {sf}"
+    print("  -> Sensitive data thoroughly purged from all snapshot files as well.")
 
     print("  [Step 6] Running integrity verify & audit...")
     res_ver = run(root, "verify")

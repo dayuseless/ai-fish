@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref", default="", help="来源/证据引用，例如 evt-... 或文件路径")
     p.add_argument("--actor", default="agent", choices=("user", "agent", "system"))
     p.add_argument("--tag", action="append", default=[], help="可重复的标签")
+    p.add_argument("--idempotent", action="store_true", help="若今日已存在相同 kind/text/ref/actor 则跳过追加，保持幂等")
     p.set_defaults(func=cmd_note)
 
     p = sub.add_parser("pending", help="列出尚未固化的原始事件")
@@ -115,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("search", help="检索长期记忆、日记和原始事件")
     p.add_argument("--query", required=True)
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--scope", default="admin", choices=("admin", "public"), help="检索权限范围：admin（默认全量）或 public（仅公开记忆）")
     p.add_argument("--text-only", action="store_true", help="跳过数据库 FTS5，强制进行纯文本扫描")
     p.set_defaults(func=cmd_search)
 
@@ -175,6 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = db_sub.add_parser("get", help="按编号查询长期记忆结构化条目（如 U-009, F-001）")
     sp.add_argument("key", help="条目编号，例如 U-009, F-001, M-001")
+    sp.add_argument("--scope", default="admin", choices=("admin", "public"), help="权限范围")
 
     sp = db_sub.add_parser("query", help="执行只读 SQL SELECT 语句")
     sp.add_argument("sql", help="SQL 查询语句 (SELECT ...)")
@@ -184,6 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--actor", choices=("user", "agent", "system"))
     sp.add_argument("--date", help="YYYY-MM-DD")
     sp.add_argument("--pending", action="store_true", help="只查未固化事件")
+    sp.add_argument("--scope", default="admin", choices=("admin", "public"), help="权限范围")
     sp.add_argument("--limit", type=int, default=50)
     p.set_defaults(func=cmd_db)
 
