@@ -142,10 +142,11 @@ def test_tombstone_redaction(f: dict):
     res_search = run(root, "search", "--query", "Secret9988")
     assert secret_text in res_search.stdout, "Sensitive token should be initially found in search"
 
-    # Create a mock daily log containing the sensitive event to test daily cascade redaction
-    daily_file = mem_dir / "daily" / "2026-11-02.md"
+    import datetime
+    today_str = datetime.date.today().isoformat()
+    daily_file = mem_dir / "daily" / f"{today_str}.md"
     daily_file.write_text(
-        "# 2026-11-02 日记\n\n## 事件\n\n- 初始化临时密钥：" + secret_text + " `" + secret_evt + "`\n",
+        f"# {today_str} 日记\n\n## 原始事件\n- {secret_evt}\n\n## 明确表达\n- 无\n\n## 观察\n- 无\n\n## 推断\n- 无\n\n## 未知\n- 无\n\n## 待办\n- 无\n\n## 事件\n- 初始化临时密钥：{secret_text} `{secret_evt}`\n",
         encoding="utf-8"
     )
 

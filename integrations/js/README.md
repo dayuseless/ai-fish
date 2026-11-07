@@ -1,6 +1,15 @@
 # Node.js Integrations & Utilities
 
-This directory contains standalone, zero-dependency Node.js utility scripts designed to integrate with `ai-fish`.
+Standalone, zero-dependency Node.js utility scripts designed to integrate with `ai-fish`.
+
+## Dependencies & Requirements
+
+| Requirement | Specification | Purpose |
+| :--- | :--- | :--- |
+| **Node.js** | `>= 22.5.0` | Required for native built-in `node:sqlite` database driver |
+| **External npm Packages** | None (Zero external dependencies) | Uses native Node.js standard libraries only |
+
+---
 
 ## Included Scripts
 

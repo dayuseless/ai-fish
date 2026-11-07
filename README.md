@@ -251,7 +251,22 @@ A battle-tested security plugin bundle for DeepSeek Harness (DSH) and Cordis run
 }
 ```
 
-### 3. Node.js Standalone Integrations (`integrations/js/`)
+### 3. DSH Mode Console (`plugins/dsh-mode-console`)
+A settings UI plugin for DeepSeek Harness (DSH) exposing dynamic agent mode switches:
+- Supports `interactive`, `chat-only`, `autonomous`, and `reserved` runtime modes.
+- Integrates seamlessly with Cordis settings schema form generator via `@deepseek-ai/schemastery`.
+
+```json
+// In your DSH profile package.json:
+{
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "dsh-mode-console": "link:./plugins/dsh-mode-console"
+  }
+}
+```
+
+### 4. Node.js Standalone Integrations (`integrations/js/`)
 - **`admin.mjs`**: Fast CLI operator tool to query FTS5 memory and manage asynchronous agent-to-agent mailboxes.
   ```bash
   node integrations/js/admin.mjs search "architecture decisions"
@@ -259,6 +274,17 @@ A battle-tested security plugin bundle for DeepSeek Harness (DSH) and Cordis run
   ```
 - **`digest-auto.mjs`**: Automated task runner for background memory distillation and SQLite sync (`--daemon` mode supported).
 - **`peak-gate.mjs`**: Schedule-aware token economy gatekeeper for automated companion bots, distinguishing peak hours (strict quotas) from off-peak hours.
+
+---
+
+### 📦 Plugin Dependencies & System Requirements
+
+| Component / Plugin | Directory | Runtime Environment | External Dependencies | Primary Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **MCP Memory Server** | `plugins/mcp-memory-server` | Node.js >= 22.5.0 | **Zero external dependencies** (native `node:sqlite`) | Direct stdio MCP memory bridge for Claude, Cursor, Cline, Windsurf |
+| **DSH Agent Presets** | `plugins/dsh-agent-presets` | DeepSeek Harness / Cordis | **Zero external dependencies** (Cordis bundle patch) | Agent schema tool restriction guard and safe presets (`chat-only`, `safe-agent`) |
+| **DSH Mode Console** | `plugins/dsh-mode-console` | DeepSeek Harness / Cordis | `@deepseek-ai/schemastery: ^3.18.1` | Settings UI runtime mode switcher and status inspector |
+| **JS Integrations** | `integrations/js/` | Node.js >= 22.5.0 | **Zero external dependencies** (native `node:sqlite`) | Standalone CLI query tool, background digest daemon, peak rate limiter |
 
 ---
 
