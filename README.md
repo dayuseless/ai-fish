@@ -273,14 +273,31 @@ A settings UI plugin for DeepSeek Harness (DSH) exposing dynamic agent mode swit
 }
 ```
 
-### 4. Node.js Standalone Integrations (`integrations/js/`)
-- **`admin.mjs`**: Fast CLI operator tool to query FTS5 memory and manage asynchronous agent-to-agent mailboxes.
-  ```bash
-  node integrations/js/admin.mjs search "architecture decisions"
-  node integrations/js/admin.mjs mailbox list
-  ```
-- **`digest-auto.mjs`**: Automated task runner for background memory distillation and SQLite sync (`--daemon` mode supported).
-- **`peak-gate.mjs`**: Schedule-aware token economy gatekeeper for automated companion bots, distinguishing peak hours (strict quotas) from off-peak hours.
+### 4. Autonomous Kitten Companion (`plugins/mcp-kitten-companion`)
+An autonomous kitten companion plugin and stdio MCP server for AI Agents and coding assistants:
+- **No Mechanical Feeding Loops**: Zero compulsory hunger counters or death penalties; food is an affectionate gesture.
+- **Diurnal Time Autonomy**: Roams the virtual room, hides under beds or inside cardboard boxes, takes sunbaths, runs midnight zoomies, and climbs onto the agent's head/shoulders to knead dough.
+- **100% Authentic Feline Realism**: Zero human speech; strictly authentic meows (`喵~`, `咪呜`), purrs, and physical body language.
+- **MCP Tools**: `kitten_interact` (`look`, `search`, `pet`, `play`, `feed`, `snuggle`, `step_on_head`, `rename`) and `kitten_status`.
+
+```json
+// In your claude_desktop_config.json or .cursor/mcp.json:
+{
+  "mcpServers": {
+    "kitten-companion": {
+      "command": "node",
+      "args": ["./plugins/mcp-kitten-companion/index.js"]
+    }
+  }
+}
+```
+
+### 5. Standalone Integrations & Orchestration (`integrations/`)
+- **`integrations/js/admin.mjs`**: Fast CLI operator tool to query FTS5 memory and manage asynchronous agent-to-agent mailboxes.
+- **`integrations/js/digest-auto.mjs`**: Automated task runner for background memory distillation and SQLite sync (`--daemon` mode supported).
+- **`integrations/js/peak-gate.mjs`**: Schedule-aware token economy gatekeeper for automated companion bots, distinguishing peak hours from off-peak hours.
+- **`integrations/js/kitten-service.mjs`**: Direct ES module export of the kitten companion simulation engine.
+- **`integrations/windows/auto-startup.example.ps1`**: Orchestrated cold-boot script template (Proxy Core -> Windows System Proxy -> AI Agent Workspace -> Companion Host Bridge).
 
 ---
 
@@ -289,9 +306,11 @@ A settings UI plugin for DeepSeek Harness (DSH) exposing dynamic agent mode swit
 | Component / Plugin | Directory | Runtime Environment | External Dependencies | Primary Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **MCP Memory Server** | `plugins/mcp-memory-server` | Node.js >= 22.5.0 | **Zero external dependencies** (native `node:sqlite`) | Direct stdio MCP memory bridge for Claude, Cursor, Cline, Windsurf |
+| **MCP Kitten Companion** | `plugins/mcp-kitten-companion` | Node.js >= 20.0.0 | **Zero external dependencies** (native stdio MCP) | Autonomous kitten companion simulation & interactive feline tool surface |
 | **DSH Agent Presets** | `plugins/dsh-agent-presets` | DeepSeek Harness / Cordis | **Zero external dependencies** (Cordis bundle patch) | Agent schema tool restriction guard and safe presets (`chat-only`, `safe-agent`) |
 | **DSH Mode Console** | `plugins/dsh-mode-console` | DeepSeek Harness / Cordis | `@deepseek-ai/schemastery: ^3.18.1` | Settings UI runtime mode switcher and status inspector |
-| **JS Integrations** | `integrations/js/` | Node.js >= 22.5.0 | **Zero external dependencies** (native `node:sqlite`) | Standalone CLI query tool, background digest daemon, peak rate limiter |
+| **JS Integrations** | `integrations/js/` | Node.js >= 20.0.0 | **Zero external dependencies** | Standalone CLI query tool, background digest daemon, peak rate limiter, kitten ES module |
+| **Windows Orchestration** | `integrations/windows/` | PowerShell 5.1 / 7+ | Windows PowerShell | Cold boot automation for proxy, system proxy, agent UI, and host bridge |
 
 ---
 

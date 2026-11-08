@@ -44,6 +44,11 @@ console.log('Testing guarded mode...');
   assert.equal(guard({ name: 'todo_write' }), undefined);
   assert.equal(guard({ name: 'mcp__ai-fish__mem_search' }), undefined);
 
+  // Default guarded mode allows mcp__kitten__
+  const { ctx: defCtx, guards: defGuards } = createMockContext();
+  apply(defCtx);
+  assert.equal(defGuards[0]({ name: 'mcp__kitten__kitten_interact' }), undefined);
+
   // Dangerous tools should be blocked
   assert.match(guard({ name: 'pwsh' }), /restricted/);
   assert.match(guard({ name: 'write' }), /restricted/);

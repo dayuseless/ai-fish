@@ -1,0 +1,15 @@
+{
+  "name": "mcp-kitten-companion",
+  "version": "1.0.0",
+  "description": "Autonomous Kitten Companion MCP Server for AI Agents — Real-time Diurnal Simulation, Feline Realism, Zero-Dependency",
+  "type": "module",
+  "bin": {
+    "mcp-kitten-companion": "./index.js"
+  },
+  "main": "./index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/test-kitten.mjs"
+  }
+}

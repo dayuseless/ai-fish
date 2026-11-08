@@ -64,7 +64,7 @@ export function apply(ctx, config = {}) {
   }
 
   // Runtime guard whitelist
-  const allowedPrefixes = config.allowedPrefixes || ['mcp__ai-fish__', 'mcp__memory__'];
+  const allowedPrefixes = config.allowedPrefixes || ['mcp__ai-fish__', 'mcp__memory__', 'mcp__kitten__'];
   ctx.tools.guard((tool) => {
     if (SAFE_EXACT.has(tool.name)) return;
     for (const prefix of allowedPrefixes) {
