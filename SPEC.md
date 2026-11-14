@@ -397,47 +397,17 @@ python -X utf8 ai-fish/bin/mem.py db sync
 
 ## 十六、版本控制（git）
 
-**为什么有这一层**：`mem.py` 已 1800 行、四个测试、三套任务入口，此前只靠“改前快照 + 改后测试”。快照能退回上一版，却看不到 diff、`reflog` 救不了误操作、`bisect` 定位不了回归；这层补的就是**改坏了能不能退、能不能追**。
+**机制定位**：记忆库由本地 git 做版本追踪，补全 diff 查验、`bisect` 回归定位与 `reflog` 误操作恢复。
 
-**与既有机制的边界**（重要，别让 git 变成第二个真相）：
+**与既有机制的边界**：
+- **原始事件**（`daily/raw/*.jsonl`）与**日记批次**（`daily/*.md`）：只读查验；**不用 git 回退**（修正走“追加更正 + 快照”）。
+- **长期文件**：`snapshots/` 不可覆盖快照为主，git 为辅。`snapshots/` 不入库（防历史改写击穿锚点）。
+- **代码 / 测试 / 规则文档**：git 的主用途（回退、bisect）。
 
-| 关注点 | 权威机制 | git 的角色 |
-|---|---|---|
-| 原始事件 | `daily/raw/*.jsonl` 只追加 | 只读：看历史、看 diff；**不用 git 回退** |
-| 日记批次 | `daily/*.md` + `commit-daily` | 只读；修正走“追加更正 + 快照” |
-| 长期文件 | `snapshots/` 不可覆盖快照 | 辅助：看差异、找哪次改的 |
-| 代码 / 测试 / 规则文档 | — | **主用途**：回退、bisect、reflog |
-
-`snapshots/` 不进 git：它是不可篡改的锚点（且要求不可覆盖），git 历史可以被改写，两者不能互相替代。
-
-**纳入范围**：`AGENTS.md`、`ai-fish/*.md`、`bin/`、`tests/`、`daily/`（含 raw）。
-**排除**（`.gitignore`）：`snapshots/`、`playbook-download/`、`inbox/`、`state.json`、`index/*.lock`、`index/*.log`、`index/qq-digest-*state.json`、`daily/.draft-*`、`__pycache__`。
-
-**纪律**：
-
-1. **提交信息写“为什么”，diff 已说清“改了什么”。**不写“update files”。
-2. **改代码后先跑测试再提交**：`tests/meta_selftest.py`、`todo_selftest.py`、`audit_selftest.py`、`failure_injection.py` + `mem.py verify`/`audit`。
-3. **`commit-daily` 之后提交一次**，把那一轮日记与事件定格。
-4. 小步提交：一次一件事，不把“改规则”和“改代码”混在一个 commit。
-
-**护栏**（对 Agent 自己）：可读全仓、可提交、可建分支与 tag；**不许推送**（本仓库无 remote，将来加 remote 需单独授权）、**不许 force push**、**不许改写历史**（`reset --hard` 到旧提交、`rebase` 已提交记录）、**不碰 `.git/config` 与 hooks**。
-
-常用：`git log --oneline -10`、`git diff`、`git show <commit> -- <path>`、`git checkout -- <path>`（只用于代码与文档，不用于 raw/日记）。**异地备份**（2026-10-28 23:35 起）：两个私有仓库，用户明确授权，范围仅此二者。
-
-| 仓库 | 内容 | 门槛 |
-|---|---|---|
-| `github.com/<your-org>/memory` | 记忆库（代码、规则文档、日记、raw） | `verify` + `audit` 都通过才允许推送 |
-| `github.com/<your-org>/memory-roles` | 人格卡（`./roles`） | 无机械校验（人设内容），有改动即提交推送 |
-
-- 入口：`python -X utf8 ai-fish/bin/backup.py`；计划任务 `Memory-Backup` 每天 **01:50**（`install-backup-task.ps1` 注册，`backup.vbs` 隐藏窗口；原 04:05，为避开 02:00 休眠提前）。两个仓库依次处理，单个失败不影响另一个。
-- 顺序固定：`verify` → `audit` → 有改动才 `commit` → `push`。**校验不过就放弃这次备份**（宁缺毋滥，避免远端变成“看起来有备份”的假象）。
-- 无改动不产生空提交；推送失败保留本地提交，下次自动重试。
-- 凭证：GitHub PAT 存在 **Windows 凭据管理器**（`git credential approve`，host `github.com`），不写进任何记忆文件、不进仓库。`.gitignore` 已排除运行态与 `*.log`。
-- 手动演练：`--dry-run`（只检查）、`--no-push`（只提交）。
-- 令牌最小化（2026-10-28）：旧 classic PAT 带 `admin:enterprise`/`delete_repo`，已换成仅 `repo` + `admin:repo_hook`；classic PAT 无 API 可删，旧令牌需用户手动吊销。
-- 恢复限制：仓库不含工作区外的 `RULES.md` 与 `RULES.sha256`。全毁时用镜像重建并重算封印——**那已不是同一个封印**，恢复时须记事件说明。
-
----
+**纪律与护栏**：
+1. **提交写明“为什么”**，改代码后必须跑通全套测试（`run_all.py` + `verify` / `audit`）；`commit-daily` 后定格提交。
+2. **严苛护栏**：可读全仓、可提交、可建分支；**不许推送主仓**、**不许 force push**、**不许改写历史**、**不碰 `.git/config` 与 hooks**。
+3. **异地备份**（每日 01:50 计划任务执行 `bin/backup.py`）：仅限用户授权的 `memory` 与 `memory-roles` 远端；必须 `verify` + `audit` 全绿方可推送；凭证存储于 Windows 凭据管理器，严禁落盘。
 
 ## 十七、数据遗忘边界与快照物理清洗
 
@@ -498,3 +468,48 @@ ai-fish 明确划分三层系统边界：
 3. **第三层：公开开源引擎（Code & Tooling Engine）**：
    - 路径：`D:\ai-fish-release`（`github.com/dayuseless/ai-fish`）
    - 纯净代码库、MCP 协议服务、集成适配器与通用测试套件。零记忆正文、零私密数据、零运行时日志。
+---
+
+## 二十一、乐观并发控制与三态现场状态机
+
+为抵御异步长任务覆盖与多会话交叉写冲突，引入乐观并发控制与严格现场状态机：
+
+1. **`state_revision` 单调递增修订指纹**：
+   - `state.json` 与 `social-v2.json` 包含单调自增整数 `state_revision`。
+   - `save_state(state, expected_revision)` 支持乐观锁检验；若写入时磁盘版本与期望版本不一致，强制抛出 `MemError` 拦截覆写。
+2. **三态 PATCH 现场解析语义（`resume.md` / `scene.js`）**：
+   - `undefined`（缺省）：继承上一轮旧值（保持连续性）；
+   - `null` 或 `""` / `[]`：**显式清空**（彻底抹除已完成动作或悬念，防幽灵复活）；
+   - 非空字符串/数组：安全清洗并覆盖更新。
+3. **10 步 FIFO 时光机栈**：
+   - 现场状态（`location, action, tension, unresolved, characters`）变动时自动推入 10 步历史栈；
+   - 支持一键撤销回滚（`mem.py scene --rollback` 与 MCP 工具 `qq_scene_rollback`）。
+
+---
+
+## 二十二、记忆高阶归并与双向血缘溯源
+
+当短期琐碎记忆需要浓缩升格为长期宏观事实时，遵循原子归并与血缘溯源规范：
+
+1. **Pre-flight 预审门禁**：
+   - 校验长期记忆 Schema（`key`, `title`, `content`）；
+   - 严格执行 ACL 防提权检验：若源事件包含 `admin_only` 私密条目，禁止将其直接归并升格为 `public` 长期记忆。
+2. **强制事务回滚**：
+   - 长期记忆新记录入库与源事件标记绑定于同一 SQLite 事务；任何环节失败立即全量回滚，原始记忆零丢失。
+3. **双向血缘链条**：
+   - 长期记录保存 `consolidated_from: [eid1, eid2, ...]`；
+   - 原始事件更新 `superseded_by: item_id`，支持从高阶事实随时一键下钻第一现场。
+
+---
+
+## 二十三、本地 256 维稠密向量引擎与混合检索
+
+消解口语化、隐喻与同义转述的语义鸿沟，同时坚持零外部依赖原则：
+
+1. **纯标准库 256 维本地稠密向量（`vector.py`）**：
+   - 采用字符多尺度 N-gram（1-gram, 2-gram, 3-gram）提取特征；
+   - 采用 FNV-1a 双散列投射维度与符号位（消除维度对消偏差），并经由 L2 模长归一化；
+   - 确定性、无外部 C 扩展或大模型 API 开销，单条向量化耗时 `<0.1ms`。
+2. **Hybrid Fusion 混合检索**：
+   - 结合 SQLite FTS5 的 BM25 词法倒排与稠密向量余弦相似度（Cosine Similarity），加权融合排序（`search_hybrid`）；
+   - 支持纯语义扫描检索（`search_dense`），在精确词未命中的情况下召回相关认知。
