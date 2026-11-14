@@ -45,11 +45,8 @@ FIXTURE_DAY2 = """# 2026-01-02 日记
 
 
 def run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    mem_script = root / "ai-fish" / "bin" / "mem.py"
-    if not mem_script.is_file():
-        mem_script = root / "bin" / "mem.py"
     return subprocess.run(
-        [sys.executable, "-X", "utf8", str(mem_script), *args],
+        [sys.executable, "-X", "utf8", str(root / "ai-fish" / "bin" / "mem.py"), *args],
         cwd=str(root),
         capture_output=True,
         text=True,
@@ -110,7 +107,7 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     # 8) 真实库只读回归：输出体量必须显著小于整篇 MEMORY.md + 日记
-    real = run(BASE, "todo", "--days", "1", "--max-chars", "120")
+    real = run(BASE.parent, "todo", "--days", "1", "--max-chars", "120")
     assert real.returncode == 0, real.stderr
     assert len(real.stdout) < 6000, f"todo 输出过大，失去省 token 的意义：{len(real.stdout)} chars"
 

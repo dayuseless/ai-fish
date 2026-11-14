@@ -137,6 +137,19 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
     raw_path = RAW / f"{date}.jsonl"
     ref = args.ref or ""
     tags = list(args.tag or [])
+    vis_arg = getattr(args, "visibility", None)
+    if vis_arg:
+        visibility = vis_arg
+    else:
+        tags_lower = [t.lower() for t in tags]
+        visibility = "public" if "public" in tags_lower else "admin_only"
+
+    # Ingress Guard: Scope Escalation Guard
+    # Non-admin/user actors (e.g. AI agent) cannot create public inferences, observations, or todos
+    if visibility == "public" and getattr(args, "actor", "agent") not in ("user", "admin"):
+        if getattr(args, "kind", "") in ("inference", "observation", "todo"):
+            visibility = "admin_only"
+
 
     # 幂等检查：若指定 --idempotent 且今日原始日志中已存在相同 (kind, text, ref, actor)，直接跳过追加
     if getattr(args, "idempotent", False) and raw_path.is_file():
@@ -192,6 +205,7 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
         "text": text,
         "ref": ref,
         "tags": tags,
+        "visibility": visibility,
         "source": f"session:{session_id()}",
         "recordedAt": ts,
         "prev_hash": prev_hash,
@@ -229,14 +243,9 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
             tags_str = " ".join(tags)
             conn.execute("""
             INSERT OR REPLACE INTO raw_events
-            (id, ts, date, kind, actor, text, ref, tags, is_pending)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-            """, (eid, ts, date, args.kind, args.actor, text, ref, tags_str))
-            is_pub = "public" if (
-                any(t in tags_str.lower() for t in ("public", "grant", "rules", "qq", "soli", "cross-session", "watchdog", "persona", "b站"))
-                or any(w in text for w in ("B站", "索利", "QQ链路", "跨会话", "看门狗", "授权", "规则"))
-                or "qq-digest" in ref.lower() or "qq" in ref.lower()
-            ) else "admin_only"
+            (id, ts, date, kind, actor, text, ref, tags, is_pending, visibility)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """, (eid, ts, date, args.kind, args.actor, text, ref, tags_str, visibility))
             conn.execute("""
             INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
             VALUES ('raw_event', ?, ?, ?, ?, ?, ?)
@@ -246,7 +255,7 @@ def _write_note(args: argparse.Namespace, text: str) -> int:
                 cjk_tokenize(f"[{args.kind}] {args.actor}"),
                 cjk_tokenize(text),
                 cjk_tokenize(f"{ref} {tags_str}"),
-                is_pub,
+                visibility,
             ))
             conn.execute("INSERT OR REPLACE INTO db_meta (key, value) VALUES ('raw_event_count', (SELECT count(*) FROM raw_events));")
             conn.execute("INSERT OR REPLACE INTO db_meta (key, value) VALUES ('last_note_at', ?);", (ts,))

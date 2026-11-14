@@ -83,8 +83,6 @@ shutil.copytree(SOURCE / "bin" / "lib", ROOT / "bin" / "lib", dirs_exist_ok=True
 for name in ("daily", "index", "snapshots"):
     shutil.copytree(SOURCE / name, ROOT / name)
 
-if (SOURCE / "AGENTS.md").exists():
-    shutil.copyfile(SOURCE / "AGENTS.md", ROOT / "AGENTS.md")
 if not AGENTS.exists():
     AGENTS.write_text("# faulttest workspace\n", encoding="utf-8")
     CREATED_AGENTS = True

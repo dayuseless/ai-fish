@@ -100,6 +100,7 @@ def init_db(conn: sqlite3.Connection, drop_existing: bool = False) -> None:
         evidence TEXT DEFAULT '',
         doc_version TEXT DEFAULT '',
         visibility TEXT DEFAULT 'admin_only',
+        consolidated_from TEXT DEFAULT '',
         synced_at TEXT NOT NULL
     );
 
@@ -117,7 +118,8 @@ def init_db(conn: sqlite3.Connection, drop_existing: bool = False) -> None:
         ref TEXT DEFAULT '',
         tags TEXT DEFAULT '',
         is_pending INTEGER DEFAULT 0,
-        visibility TEXT DEFAULT 'admin_only'
+        visibility TEXT DEFAULT 'admin_only',
+        superseded_by TEXT DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_raw_date ON raw_events(date);
@@ -147,6 +149,18 @@ def init_db(conn: sqlite3.Connection, drop_existing: bool = False) -> None:
         tokenize='unicode61'
     );
     """)
+    try:
+        conn.execute("ALTER TABLE long_term_items ADD COLUMN consolidated_from TEXT DEFAULT '';")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE raw_events ADD COLUMN superseded_by TEXT DEFAULT '';")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_superseded ON raw_events(superseded_by);")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 
@@ -290,7 +304,7 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
                 it["doc"] == "RULES.md"
                 or it["key"].startswith(("U-010", "U-011", "F-001"))
                 or any(w in it["title"] or w in it["section"] for w in ("授权", "规则", "公开", "设定", "人设", "自我认识", "运行环境"))
-                or any(w in it["content"] for w in ("权限", "授权", "公开", "public", "rules"))
+                or any(w in it["content"] for w in ("B站", "索利", "权限", "授权"))
             ) else "admin_only"
 
             cur.execute("""
@@ -340,8 +354,7 @@ def sync_all(base: Path | None = None, rebuild: bool = False) -> dict[str, Any]:
 
         is_pub = "public" if (
             obj.get("visibility") == "public"
-            or any(t in tags_str.lower() for t in ("public", "grant", "rules", "cross-session", "system", "general"))
-            or any(w in text for w in ("授权", "规则", "公开", "public", "system"))
+            or "public" in [t.lower() for t in (tags_list if isinstance(tags_list, list) else tags_str.split())]
         ) else "admin_only"
 
         cur.execute("""
@@ -443,7 +456,10 @@ def search_fts(
         if category:
             sql += " AND category = ?"
             params.append(category)
-        if scope == "public":
+        if scope == "admin":
+            pass
+        else:
+            # Strict Fail-Closed: non-admin or unknown scopes only see public
             sql += " AND visibility = 'public'"
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
@@ -460,6 +476,7 @@ def search_fts(
                 "title": r["title"].replace(" ", ""),
                 "body": r["body"].replace(" ", ""),
                 "tags": r["tags"].replace(" ", ""),
+                "visibility": r["visibility"],
                 "rank": r["rank"],
             })
         return results
@@ -469,6 +486,79 @@ def search_fts(
         conn.close()
 
 
+def search_hybrid(
+    query: str,
+    limit: int = 50,
+    scope: str = "admin",
+    base: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Hybrid Retrieval Fusion: Combines FTS5 lexical match with 256-dim dense vector cosine similarity."""
+    from .vector import cosine_similarity, generate_local_embedding
+
+    fts_rows = search_fts(query, limit=limit, scope=scope, base=base)
+    if not fts_rows:
+        return []
+
+    query_vec = generate_local_embedding(query)
+    scored_candidates: list[dict[str, Any]] = []
+
+    for idx, r in enumerate(fts_rows):
+        text_corpus = f"{r['title']} {r['body']} {r['tags']}"
+        cand_vec = generate_local_embedding(text_corpus)
+        sim = cosine_similarity(query_vec, cand_vec)
+        fts_norm = 1.0 / (1.0 + idx * 0.1)
+        fused = 0.55 * sim + 0.45 * fts_norm
+        r["similarity"] = round(sim, 4)
+        r["fused_score"] = round(fused, 4)
+        scored_candidates.append(r)
+
+    scored_candidates.sort(key=lambda x: x["fused_score"], reverse=True)
+    return scored_candidates
+
+
+def search_dense(
+    query: str,
+    limit: int = 20,
+    scope: str = "admin",
+    threshold: float = 0.18,
+    base: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Pure Dense Vector Cosine Search across long-term items with Fail-Closed visibility."""
+    from .vector import cosine_similarity, generate_local_embedding
+
+    query_vec = generate_local_embedding(query)
+    db_path = get_db_path(base)
+    if not db_path.is_file():
+        return []
+
+    conn = get_db(base)
+    candidates: list[dict[str, Any]] = []
+    try:
+        vis_filter = "" if scope == "admin" else "WHERE visibility = 'public'"
+        cur = conn.execute(f"SELECT doc, item_key, title, content, visibility FROM long_term_items {vis_filter}")
+        for row in cur.fetchall():
+            text_corpus = f"{row['title']} {row['content']}"
+            cand_vec = generate_local_embedding(text_corpus)
+            sim = cosine_similarity(query_vec, cand_vec)
+            if sim >= threshold:
+                candidates.append({
+                    "category": "long_term",
+                    "doc": row["doc"],
+                    "item_id": row["item_key"],
+                    "title": row["title"],
+                    "body": row["content"],
+                    "tags": "vector_dense_hit",
+                    "visibility": row["visibility"],
+                    "similarity": round(sim, 4),
+                    "fused_score": round(sim, 4),
+                })
+    finally:
+        conn.close()
+
+    candidates.sort(key=lambda x: x["similarity"], reverse=True)
+    return candidates[:limit]
+
+
 def get_long_term_item(item_key: str, scope: str = "admin", base: Path | None = None) -> dict[str, Any] | None:
     db_path = get_db_path(base)
     if not db_path.is_file():
@@ -476,12 +566,12 @@ def get_long_term_item(item_key: str, scope: str = "admin", base: Path | None = 
     conn = get_db(base)
     try:
         sql = """
-        SELECT id, item_key, doc, section, title, content, evidence, doc_version, visibility, synced_at
+        SELECT id, item_key, doc, section, title, content, evidence, doc_version, visibility, consolidated_from, synced_at
         FROM long_term_items
         WHERE (item_key = ? OR id = ?)
         """
         params: list[Any] = [item_key, item_key]
-        if scope == "public":
+        if scope != "admin":
             sql += " AND visibility = 'public'"
         sql += " LIMIT 1"
         cur = conn.execute(sql, params)
@@ -522,11 +612,11 @@ def query_raw_events(
             clauses.append("is_pending = ?")
             params.append(1 if is_pending else 0)
 
-        if scope == "public":
+        if scope != "admin":
             clauses.append("visibility = 'public'")
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        sql = f"SELECT id, ts, date, kind, actor, text, ref, tags, is_pending FROM raw_events{where} ORDER BY ts DESC LIMIT ?"
+        sql = f"SELECT id, ts, date, kind, actor, text, ref, tags, visibility, is_pending, superseded_by FROM raw_events{where} ORDER BY ts DESC LIMIT ?"
         params.append(limit)
 
         cur = conn.execute(sql, params)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ai-fish core primitives: paths, cross-platform lock, atomicity, state, and jsonl."""
+"""ai-fish core primitives: paths, lock, atomicity, state, and jsonl."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +13,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-# Cross-platform file locking support: Windows (msvcrt) vs POSIX (fcntl)
 try:
     import msvcrt
 except ImportError:
@@ -22,12 +21,11 @@ except ImportError:
 try:
     import fcntl
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
-
 
 def _detect_base() -> Path:
     env_base = os.environ.get("AI_FISH_BASE")
@@ -45,7 +43,7 @@ def _detect_base() -> Path:
 
 
 BASE = _detect_base()
-WORKSPACE = BASE
+WORKSPACE = BASE.parent
 DAILY = BASE / "daily"
 RAW = DAILY / "raw"
 ARCHIVE = DAILY / "archive"
@@ -69,8 +67,8 @@ SESSION_ROOT = DSH_HOME / "sessions"
 DEFAULT_CONFIG = {
     "version": 1,
     "workspace": str(WORKSPACE),
-    "canonical_rules": str(Path.home() / ".ai-fish" / "RULES.md"),
-    "canonical_seal": str(Path.home() / ".ai-fish" / "RULES.sha256"),
+    "canonical_rules": r"C:\Users\admin\.ai-fish\RULES.md",
+    "canonical_seal": r"C:\Users\admin\.ai-fish\RULES.sha256",
     "max_note_chars": 12000,
     "max_search_results": 80,
 }
@@ -104,11 +102,7 @@ def today_str() -> str:
 
 
 def session_id() -> str:
-    return (
-        os.environ.get("AI_FISH_SESSION_ID")
-        or os.environ.get("DSH_SESSION_ID")
-        or "default-session"
-    )
+    return os.environ.get("DSH_SESSION_ID") or "unknown-session"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -167,13 +161,16 @@ def ensure_dirs() -> None:
 
 @contextmanager
 def memory_lock(timeout: float = 30.0):
-    """Serialize memory mutations across processes/sessions.
+    """Serialize memory mutations across processes.
 
-    Cross-platform locking:
-      - Windows: msvcrt.locking on index/.lock byte region
-      - POSIX: fcntl.flock on index/.lock
-    When the process terminates or exits the context, lock is reliably released.
+    Cross-platform implementation:
+      - Windows: 1-byte non-blocking lock via msvcrt.locking
+      - Unix/Linux/macOS: POSIX advisory mutex via fcntl.flock
     """
+    if msvcrt is None and fcntl is None:
+        yield
+        return
+
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not LOCK_PATH.exists() or LOCK_PATH.stat().st_size == 0:
         try:
@@ -209,10 +206,10 @@ def memory_lock(timeout: float = 30.0):
                 try:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
-                except OSError as exc:
+                except (OSError, IOError) as exc:
                     if time.monotonic() >= deadline:
                         raise MemError(
-                            f"无法在 {timeout:.0f}s 内获取记忆写锁；另一个进程可能正在写入"
+                            f"无法在 {timeout:.0f}s 内获取记忆写锁 (flock)；另一个进程可能正在写入"
                         ) from exc
                     time.sleep(0.05)
             try:
@@ -222,8 +219,6 @@ def memory_lock(timeout: float = 30.0):
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                 except OSError:
                     pass
-        else:
-            yield
 
 
 def load_config() -> dict:
@@ -235,17 +230,6 @@ def load_config() -> dict:
                 cfg.update(data)
         except Exception as exc:  # noqa: BLE001 - report and keep defaults
             print(f"WARN: 无法读取 config.json，使用默认配置：{exc}")
-    # Standalone fallback: if canonical rules are not found at default home dir,
-    # fallback to local repository RULES.md and RULES.sha256
-    can_rules = Path(cfg["canonical_rules"])
-    can_seal = Path(cfg["canonical_seal"])
-    if not can_rules.is_file() and RULES_MIRROR.is_file():
-        cfg["canonical_rules"] = str(RULES_MIRROR)
-    if not can_seal.is_file():
-        if (BASE / "RULES.sha256").is_file():
-            cfg["canonical_seal"] = str(BASE / "RULES.sha256")
-        elif LOCAL_SEAL.is_file():
-            cfg["canonical_seal"] = str(LOCAL_SEAL)
     return cfg
 
 
@@ -257,66 +241,57 @@ def _clear_readonly(path: Path) -> None:
             pass
 
 
-def atomic_write_bytes(path: Path, data: bytes, make_readonly: bool = False) -> None:
+def atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{secrets.token_hex(3)}")
+    with tmp.open("wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
     _clear_readonly(path)
-    tmp = path.parent / f".tmp-{path.name}-{secrets.token_hex(4)}"
-    try:
-        tmp.write_bytes(data)
-        tmp.replace(path)
-    finally:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-    if make_readonly:
-        try:
-            os.chmod(path, stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
-        except OSError:
-            pass
+    os.replace(tmp, path)
 
 
-def atomic_write(path: Path, text: str, make_readonly: bool = False) -> None:
-    atomic_write_bytes(path, text.encode("utf-8"), make_readonly=make_readonly)
+def atomic_write(path: Path, text: str) -> None:
+    atomic_write_bytes(path, text.encode("utf-8"))
 
 
-def atomic_write_text(path: Path, text: str, make_readonly: bool = False) -> None:
-    atomic_write_bytes(path, text.encode("utf-8"), make_readonly=make_readonly)
-
-
-def append_jsonl(path: Path, record: dict) -> None:
+def append_jsonl(path: Path, obj: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, ensure_ascii=False) + "\n"
-    with path.open("a", encoding="utf-8") as f:
-        f.write(line)
+    line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    with path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(line + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
-def read_jsonl(path: Path) -> tuple[list[dict], list[tuple[int, str]]]:
+def read_jsonl(path: Path):
+    rows: list[dict] = []
+    errors: list[str] = []
     if not path.exists():
-        return [], []
-    records: list[dict] = []
-    bad_lines: list[tuple[int, str]] = []
-    with path.open("r", encoding="utf-8", errors="replace") as f:
-        for idx, line in enumerate(f, 1):
-            stripped = line.strip()
-            if not stripped:
+        return rows, errors
+    with path.open("r", encoding="utf-8-sig", errors="replace") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
                 continue
             try:
-                obj = json.loads(stripped)
-                if isinstance(obj, dict):
-                    records.append(obj)
-                else:
-                    bad_lines.append((idx, line))
-            except json.JSONDecodeError:
-                bad_lines.append((idx, line))
-    return records, bad_lines
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                errors.append(f"{rel_posix(path)}:{lineno}: {exc}")
+                continue
+            if not isinstance(obj, dict):
+                errors.append(f"{rel_posix(path)}:{lineno}: 不是 JSON 对象")
+                continue
+            rows.append(obj)
+    return rows, errors
 
 
 def load_state() -> dict:
     if not STATE_PATH.exists():
         return {
             "version": 1,
+            "state_revision": 0,
             "createdAt": iso(),
             "lastSession": None,
             "lastConsolidation": None,
@@ -330,6 +305,7 @@ def load_state() -> dict:
     if not isinstance(data, dict):
         raise MemError("state.json 不是 JSON 对象")
     data.setdefault("version", 1)
+    data.setdefault("state_revision", 0)
     data.setdefault("lastSession", None)
     data.setdefault("lastConsolidation", None)
     data.setdefault("lastNoteAt", None)
@@ -337,5 +313,12 @@ def load_state() -> dict:
     return data
 
 
-def save_state(state: dict) -> None:
-    atomic_write_text(STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+def save_state(state: dict, expected_revision: int | None = None) -> None:
+    if expected_revision is not None and STATE_PATH.exists():
+        current = load_state()
+        curr_rev = current.get("state_revision", 0)
+        if curr_rev != expected_revision:
+            raise MemError(f"state_revision 乐观锁冲突：期望 {expected_revision}，当前磁盘版本为 {curr_rev}")
+    state["state_revision"] = int(state.get("state_revision", 0)) + 1
+    state["updatedAt"] = iso()
+    atomic_write(STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2) + "\n")

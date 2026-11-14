@@ -23,10 +23,6 @@ from .core import (
 def check_seal(cfg: dict) -> dict:
     rules = Path(cfg["canonical_rules"])
     seal = Path(cfg["canonical_seal"])
-    if not rules.is_absolute():
-        rules = (BASE / rules).resolve()
-    if not seal.is_absolute():
-        seal = (BASE / seal).resolve()
     info: dict = {
         "status": "UNKNOWN",
         "canonical": str(rules),

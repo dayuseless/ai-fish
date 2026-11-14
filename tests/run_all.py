@@ -21,6 +21,10 @@ TEST_SUITES = [
     ("db_selftest.py", "轻量级 SQLite 数据库结构化与 FTS 全文索引自测"),
     ("cognitive_selftest.py", "认知连续性演进与遗忘遮蔽自测"),
     ("test_qq_digest_transaction.py", "QQ 提炼批次事务与落库幂等性自测"),
+    ("test_acl_ingress_egress.py", "准入准出 ACL 门禁与 Fail-Closed 安全自测"),
+    ("test_concurrency_scene_state.py", "乐观并发 state_revision 与三态现场状态机自测"),
+    ("test_consolidation_provenance.py", "归并 Pre-flight 预审与双向血缘溯源自测"),
+    ("test_vector_hybrid_search.py", "256 维本地稠密向量与混合检索召回自测"),
 ]
 
 
@@ -30,9 +34,10 @@ def run_suite(script_name: str, verbose: bool = False) -> tuple[bool, float, str
         return False, 0.0, f"测试脚本不存在: {script_name}"
 
     t0 = time.perf_counter()
+    workspace_root = TESTS_DIR.parent.parent if TESTS_DIR.parent.name == "ai-fish" else TESTS_DIR.parent
     proc = subprocess.run(
         [sys.executable, "-X", "utf8", str(script_path)],
-        cwd=str(TESTS_DIR.parent.parent),
+        cwd=str(workspace_root),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -50,7 +55,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=" * 60)
-    print("开始运行 ai-fish 全量自测回归套件 (共 9 组)")
+    print(f"开始运行 ai-fish 全量自测回归套件 (共 {len(TEST_SUITES)} 组)")
     print("=" * 60)
 
     total_start = time.perf_counter()
@@ -84,7 +89,7 @@ def main() -> int:
     if any_failed:
         print("RESULT: 部分测试失败！")
         return 1
-    print("RESULT: ALL 9 TEST SUITES PASSED (全绿)")
+    print(f"RESULT: ALL {len(TEST_SUITES)} TEST SUITES PASSED (全绿)")
     print("=" * 60)
     return 0
 

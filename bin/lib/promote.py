@@ -6,8 +6,10 @@ import argparse
 import json
 import re
 from datetime import datetime, timedelta
+from typing import Any
 
-from .core import BASE, DAILY, ensure_dirs, now, read_text
+from .core import BASE, DAILY, MemError, ensure_dirs, iso, now, read_text
+from .db import cjk_tokenize, get_db, init_db
 
 _PROMOTE_KEYWORDS = ("已完成", "部署", "上线", "修复", "新增", "启用", "确认", "通过")
 
@@ -138,3 +140,111 @@ def cmd_promote_check(args: argparse.Namespace) -> int:
         print("\nNO_CANDIDATES: 近期日记中的重要条目均已覆盖")
 
     return 0
+
+
+def consolidate_events(
+    event_ids: list[str],
+    summary_item: dict[str, Any],
+    base: Path | None = None,
+) -> dict[str, Any]:
+    """Pre-flight Gate & Atomic Transaction with Rollback for Memory Consolidation."""
+    if not event_ids:
+        raise MemError("归并失败：事件列表为空")
+    if not summary_item.get("key") or not summary_item.get("title") or not summary_item.get("content"):
+        raise MemError("归并失败：长期记忆 Schema 校验不通过，缺少 key/title/content")
+
+    target_vis = summary_item.get("visibility", "admin_only")
+    conn = get_db(base, write=True)
+    init_db(conn)
+
+    try:
+        # Pre-flight: Check all events exist and verify ACL scope escalation
+        placeholders = ",".join("?" for _ in event_ids)
+        rows = conn.execute(
+            f"SELECT id, visibility FROM raw_events WHERE id IN ({placeholders})",
+            event_ids,
+        ).fetchall()
+
+        found_map = {r["id"]: r["visibility"] for r in rows}
+        missing = [eid for eid in event_ids if eid not in found_map]
+        if missing:
+            raise MemError(f"归并 Pre-flight 失败：找不到源事件 {missing}")
+
+        if target_vis == "public":
+            for eid, vis in found_map.items():
+                if vis != "public":
+                    raise MemError(f"归并 Pre-flight 拦截：私密源事件 {eid} (visibility={vis}) 不可提权升格为 public 长期记忆")
+
+        item_id = summary_item.get("id") or f"lt-{summary_item['key']}"
+        item_key = summary_item["key"]
+        doc = summary_item.get("doc", "MEMORY.md")
+        sec = summary_item.get("section", "核心事实")
+        title = summary_item["title"]
+        content = summary_item["content"]
+        evidence = summary_item.get("evidence", f"由 {len(event_ids)} 条原始事件原子归并")
+        version = summary_item.get("version", "1.0")
+        synced_at = iso()
+        cons_from_json = json.dumps(event_ids, ensure_ascii=False)
+
+        conn.execute("BEGIN TRANSACTION;")
+
+        conn.execute("""
+        INSERT OR REPLACE INTO long_term_items
+        (id, item_key, doc, section, title, content, evidence, doc_version, visibility, consolidated_from, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (item_id, item_key, doc, sec, title, content, evidence, version, target_vis, cons_from_json, synced_at))
+
+        conn.execute("""
+        INSERT INTO fts_memory (category, doc, item_id, title, body, tags, visibility)
+        VALUES ('long_term', ?, ?, ?, ?, ?, ?)
+        """, (
+            doc,
+            cjk_tokenize(item_key),
+            cjk_tokenize(title),
+            cjk_tokenize(content),
+            cjk_tokenize(f"{sec} {evidence}"),
+            target_vis,
+        ))
+
+        # Update superseded_by in raw_events
+        conn.execute(
+            f"UPDATE raw_events SET superseded_by = ? WHERE id IN ({placeholders})",
+            [item_id, *event_ids],
+        )
+
+        conn.commit()
+        return {
+            "success": True,
+            "item_id": item_id,
+            "consolidated_from": event_ids,
+            "count": len(event_ids),
+        }
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise exc
+    finally:
+        conn.close()
+
+
+def cmd_consolidate(args: argparse.Namespace) -> int:
+    """CLI handler for mem.py consolidate."""
+    ensure_dirs()
+    event_ids = args.events
+    summary = {
+        "key": args.key,
+        "title": args.title,
+        "content": args.content,
+        "doc": args.doc or "MEMORY.md",
+        "section": args.section or "核心事实",
+        "visibility": args.visibility or "admin_only",
+    }
+    try:
+        res = consolidate_events(event_ids, summary)
+        print(f"CONSOLIDATE_OK item_id={res['item_id']} events={res['count']}")
+        return 0
+    except Exception as exc:
+        print(f"CONSOLIDATE_FAIL: {exc}")
+        return 1

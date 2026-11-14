@@ -32,7 +32,7 @@ try:
     from lib.core import KINDS, MemError
     from lib.db import cmd_db
     from lib.grant import cmd_grant
-    from lib.promote import cmd_promote_check
+    from lib.promote import cmd_consolidate, cmd_promote_check
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
@@ -40,6 +40,7 @@ try:
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
+    from lib.scene import cmd_scene
 except ModuleNotFoundError:
     # Fallback import resolution
     pass
@@ -47,7 +48,7 @@ except ModuleNotFoundError:
     from lib.core import KINDS, MemError
     from lib.db import cmd_db
     from lib.grant import cmd_grant
-    from lib.promote import cmd_promote_check
+    from lib.promote import cmd_consolidate, cmd_promote_check
     from lib.search import cmd_search
     from lib.seal import cmd_sync_rules
     from lib.session import cmd_meta, cmd_session_start, cmd_sync_resume
@@ -55,6 +56,7 @@ except ModuleNotFoundError:
     from lib.todo import cmd_todo
     from lib.transcript import cmd_transcript
     from lib.mailbox import cmd_mailbox
+    from lib.scene import cmd_scene
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--file", help="从 UTF-8 文件读取事件文本")
     p.add_argument("--ref", default="", help="来源/证据引用，例如 evt-... 或文件路径")
     p.add_argument("--actor", default="agent", choices=("user", "agent", "system"))
+    p.add_argument("--visibility", choices=("admin_only", "public"), default=None, help="事件访问范围：admin_only（默认）或 public（公开可见）")
     p.add_argument("--tag", action="append", default=[], help="可重复的标签")
     p.add_argument("--idempotent", action="store_true", help="若今日已存在相同 kind/text/ref/actor 则跳过追加，保持幂等")
     p.set_defaults(func=cmd_note)
@@ -166,6 +169,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=3, help="扫描最近 N 天（默认 3）")
     p.add_argument("--json", action="store_true", help="同时输出 JSON 格式")
     p.set_defaults(func=cmd_promote_check)
+
+    p = sub.add_parser("consolidate", help="宏观记忆原子归并与双向血缘溯源")
+    p.add_argument("--events", nargs="+", required=True, help="被归并的源事件 ID 列表")
+    p.add_argument("--key", required=True, help="长期记忆条目编号，例如 M-012")
+    p.add_argument("--title", required=True, help="长期记忆标题")
+    p.add_argument("--content", required=True, help="长期记忆宏观概括内容")
+    p.add_argument("--doc", default="MEMORY.md", help="归宿文档")
+    p.add_argument("--section", default="核心事实", help="归宿章节")
+    p.add_argument("--visibility", choices=("admin_only", "public"), default="admin_only", help="可见性")
+    p.set_defaults(func=cmd_consolidate)
+
+    p = sub.add_parser("scene", help="三态现场状态机与 10 步快照时光机栈（查看、PATCH 或回滚）")
+    p.add_argument("--rollback", action="store_true", help="一键回滚到上一个现场快照")
+    p.add_argument("--history", action="store_true", help="列出快照时光机历史栈")
+    p.add_argument("--patch-json", help="以 JSON 格式提供增量补丁（三态：省略继承，空串清空，非空更新）")
+    p.add_argument("--reason", default="手动更新现场", help="变更原因说明")
+    p.set_defaults(func=cmd_scene)
 
     p = sub.add_parser("db", help="轻量级数据库管理（长期记忆结构化、FTS 索引、数据同步）")
     db_sub = p.add_subparsers(dest="db_action", required=True)

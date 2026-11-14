@@ -13,10 +13,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parent
-MEM_SRC = REPO_ROOT / "bin" / "mem.py"
-if not MEM_SRC.is_file():
-    MEM_SRC = REPO_ROOT / "ai-fish" / "bin" / "mem.py"
+MEM_SRC = (HERE.parent / "bin" / "mem.py") if (HERE.parent / "bin" / "mem.py").is_file() else (HERE.parent.parent / "ai-fish" / "bin" / "mem.py")
 
 
 def run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:

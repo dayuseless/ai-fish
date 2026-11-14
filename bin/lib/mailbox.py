@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
+r"""ai-fish cross-session mailbox tool: inspect and reply to messages from Soli (QQ bridge).
+
+Architecture role (方案 B - 用 / 中央信箱):
+  - Soli posts messages to D:\qq-bridge\state\mailbox.db via qq_talk_to_admin.
+  - The admin / main session in D:\记忆 can inspect pending or historic letters.
+  - Can record replies directly into the mailbox.
+  - Zero lock contention on memory.db; mailbox.db is an independent SQLite database.
+"""
 from __future__ import annotations
 
 import argparse
-import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .core import INDEX, load_config
-MAILBOX_DB_PATH = Path(os.environ.get("AI_FISH_MAILBOX_DB") or str(INDEX / "mailbox.db"))
+MAILBOX_DB_PATH = Path(r"D:\qq-bridge\state\mailbox.db")
 BJ_TZ = timezone(timedelta(hours=8))
+
 
 def _get_db() -> sqlite3.Connection:
     MAILBOX_DB_PATH.parent.mkdir(parents=True, exist_ok=True)

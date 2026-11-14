@@ -14,12 +14,7 @@ def _search_text(query: str, limit: int, scope: str = "admin") -> list[tuple[str
     results: list[tuple[str, int | str, str]] = []
     cfg = load_config()
 
-    if scope == "public":
-        files = [
-            BASE / "RULES.md",
-            Path(cfg.get("canonical_rules", "")),
-        ]
-    else:
+    if scope == "admin":
         files = [
             BASE / "RULES.md",
             BASE / "SELF.md",
@@ -29,6 +24,12 @@ def _search_text(query: str, limit: int, scope: str = "admin") -> list[tuple[str
             Path(cfg.get("canonical_rules", "")),
         ]
         files += sorted(DAILY.glob("20??-??-??.md"))
+    else:
+        # Strict Fail-Closed: non-admin only searches public rules
+        files = [
+            BASE / "RULES.md",
+            Path(cfg.get("canonical_rules", "")),
+        ]
     seen_files = set()
     for path in files:
         if not path.is_file():
@@ -48,16 +49,11 @@ def _search_text(query: str, limit: int, scope: str = "admin") -> list[tuple[str
 
     events, _ = all_raw_events()
     for path, lineno, obj in events:
-        if scope == "public":
-            tags_str = " ".join(obj.get("tags", [])) if isinstance(obj.get("tags"), list) else str(obj.get("tags", ""))
-            text = str(obj.get("text", ""))
-            ref = str(obj.get("ref", ""))
-            is_pub = (
-                obj.get("visibility") == "public"
-                or any(t in tags_str.lower() for t in ("public", "grant", "rules", "qq", "soli", "cross-session", "watchdog", "persona", "b站"))
-                or any(w in text for w in ("B站", "索利", "QQ链路", "跨会话", "看门狗", "授权", "规则"))
-                or "qq-digest" in ref.lower() or "qq" in ref.lower()
-            )
+        if scope != "admin":
+            tags_val = obj.get("tags", [])
+            tags_list = tags_val if isinstance(tags_val, list) else str(tags_val).split()
+            tags_lower = [str(t).lower() for t in tags_list]
+            is_pub = (obj.get("visibility") == "public") or ("public" in tags_lower)
             if not is_pub:
                 continue
 
@@ -85,9 +81,9 @@ def cmd_search(args: argparse.Namespace) -> int:
     use_text_only = getattr(args, "text_only", False)
     if not use_text_only:
         try:
-            from .db import get_db_path, search_fts
+            from .db import get_db_path, search_hybrid
             if get_db_path().is_file():
-                fts_rows = search_fts(args.query, limit=limit, scope=scope)
+                fts_rows = search_hybrid(args.query, limit=limit, scope=scope)
                 if fts_rows:
                     print(f"SEARCH \"{args.query}\" (FTS5, scope={scope}) -> {len(fts_rows)} hit(s)")
                     for r in fts_rows[:limit]:
